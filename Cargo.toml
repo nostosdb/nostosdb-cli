@@ -1,0 +1,18 @@
+[package]
+name = "nostos-cli"
+description = "Stage 0 command-line skeleton for NostosDB"
+edition = "2024"
+license = "SSPL-1.0"
+publish = false
+rust-version = "1.85"
+version = "0.1.0"
+
+[[bin]]
+name = "nostos"
+path = "src/main.rs"
+
+[dependencies]
+nostos-engine = { path = "../nostos-core/crates/nostos-engine", version = "0.1.0" }
+
+[lints.rust]
+unsafe_code = "forbid"
