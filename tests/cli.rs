@@ -176,6 +176,54 @@ fn stable_exit_codes_distinguish_usage_and_query_errors() {
 }
 
 #[test]
+fn format_outputs_canonical_source_without_mutating_the_file() {
+    let directory = temp_dir("format");
+    let source = directory.join("main.nostos");
+    fs::write(&source, "// retained\nnode alice{name:\"Alice\"}\n").expect("source writes");
+
+    let output = command()
+        .args(["format", "--file", source.to_str().expect("UTF-8 path")])
+        .output()
+        .expect("format runs");
+    assert!(output.status.success());
+    let canonical = "// retained\nnode alice {\n  name: \"Alice\"\n}\n";
+    assert_eq!(String::from_utf8(output.stdout).expect("UTF-8"), canonical);
+    assert_eq!(
+        fs::read_to_string(&source).expect("original reads"),
+        "// retained\nnode alice{name:\"Alice\"}\n"
+    );
+
+    let check = command()
+        .args([
+            "format",
+            "--file",
+            source.to_str().expect("UTF-8 path"),
+            "--check",
+        ])
+        .output()
+        .expect("format check runs");
+    assert_eq!(check.status.code(), Some(3));
+    assert!(check.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&check.stderr).contains("not canonically formatted"));
+
+    fs::write(&source, canonical).expect("canonical source writes");
+    assert!(
+        command()
+            .args([
+                "format",
+                "--file",
+                source.to_str().expect("UTF-8 path"),
+                "--check",
+            ])
+            .status()
+            .expect("canonical check runs")
+            .success()
+    );
+
+    fs::remove_dir_all(directory).expect("temporary directory removes");
+}
+
+#[test]
 fn source_sync_write_and_administration_use_the_engine_facade() {
     const OWNER: &str = "11111111-1111-1111-1111-111111111111";
     let directory = temp_dir("source");
@@ -212,7 +260,7 @@ fn source_sync_write_and_administration_use_the_engine_facade() {
     );
     assert!(String::from_utf8_lossy(&sync.stdout).starts_with("{\"columns\":"));
 
-    for administration in ["check", "inspect", "stats"] {
+    for administration in ["check", "inspect", "stats", "schema", "unresolved"] {
         let output = command()
             .args([
                 administration,
@@ -229,7 +277,47 @@ fn source_sync_write_and_administration_use_the_engine_facade() {
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(String::from_utf8_lossy(&output.stdout).starts_with("{\"columns\":"));
+        if administration == "schema" {
+            assert!(String::from_utf8_lossy(&output.stdout).contains("\"property_type\""));
+        }
+        if administration == "unresolved" {
+            assert!(String::from_utf8_lossy(&output.stdout).contains("\"internal_id\""));
+        }
     }
+    for administration in ["imports", "warnings"] {
+        let output = command()
+            .args([
+                administration,
+                "--project",
+                directory.to_str().expect("UTF-8 path"),
+                "--format",
+                "json",
+            ])
+            .output()
+            .expect("project administration runs");
+        assert!(
+            output.status.success(),
+            "{administration}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).starts_with("{\"columns\":"));
+    }
+    let formatted = command()
+        .args([
+            "format",
+            "--file",
+            directory.join("main.nostos").to_str().expect("UTF-8 path"),
+            "--project",
+            directory.to_str().expect("UTF-8 path"),
+        ])
+        .output()
+        .expect("project-version format runs");
+    assert!(
+        formatted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&formatted.stderr)
+    );
+    assert!(String::from_utf8_lossy(&formatted.stdout).contains("node alice: Person"));
     let doctor = command()
         .args([
             "doctor",

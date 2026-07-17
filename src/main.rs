@@ -8,8 +8,8 @@ use std::process::ExitCode;
 
 use nostos_engine::{
     DatabaseError, Digest, EmbeddedDatabase, Parameters, ProjectCompiler, ProjectConfig,
-    QueryResult, QueryValue, SourceWriteOptions, SourceWriter, StatementResult, Synchronizer,
-    WriteResult, prepare, prepare_write,
+    QueryResult, QueryValue, SchemaInfo, SourceWriteOptions, SourceWriter, StatementResult,
+    Synchronizer, UnresolvedInfo, WriteResult, format_source, prepare, prepare_write,
 };
 
 const EXIT_SUCCESS: u8 = 0;
@@ -26,7 +26,9 @@ Usage:
     nostos query [QUERY] [--file PATH] [--database PATH] [--project PATH]
                  [--owner MODULE_ID] [--format table|json|jsonl|csv] [--interactive]
     nostos sync --project PATH --database PATH [--format table|json]
-    nostos check|inspect|stats --database PATH [--format table|json]
+    nostos format --file PATH [--project PATH | --language-version VERSION] [--check]
+    nostos check|inspect|stats|schema|unresolved --database PATH [--format table|json]
+    nostos imports|warnings --project PATH [--format table|json]
     nostos doctor --project PATH --database PATH [--format table|json]
     nostos --help
     nostos --version
@@ -100,6 +102,20 @@ struct QueryOptions {
     interactive: bool,
 }
 
+#[derive(Debug)]
+struct FormatOptions {
+    file: PathBuf,
+    project: Option<PathBuf>,
+    language_version: Option<u32>,
+    check: bool,
+}
+
+#[derive(Debug)]
+struct ProjectOptions {
+    project: PathBuf,
+    format: OutputFormat,
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::from(EXIT_SUCCESS),
@@ -127,14 +143,70 @@ fn run() -> Result<(), CliError> {
     match command.as_str() {
         "query" => run_query(parse_query(arguments)?),
         "sync" => run_sync(parse_common(arguments, true)?),
+        "format" => run_format(parse_format(arguments)?),
         "check" => run_check(parse_common(arguments, false)?),
         "doctor" => run_doctor(parse_common(arguments, true)?),
         "inspect" => run_inspect(parse_common(arguments, false)?),
         "stats" => run_stats(parse_common(arguments, false)?),
+        "schema" => run_schema(parse_common(arguments, false)?),
+        "unresolved" => run_unresolved(parse_common(arguments, false)?),
+        "imports" => run_imports(parse_project(arguments)?),
+        "warnings" => run_warnings(parse_project(arguments)?),
         _ => Err(CliError::usage(format!(
             "unknown command `{command}`\n\n{HELP}"
         ))),
     }
+}
+
+fn parse_format(arguments: Vec<String>) -> Result<FormatOptions, CliError> {
+    let mut file = None;
+    let mut project = None;
+    let mut language_version = None;
+    let mut check = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "-f" | "--file" => file = Some(value(&arguments, &mut index)?.into()),
+            "-p" | "--project" => project = Some(value(&arguments, &mut index)?.into()),
+            "--language-version" => {
+                language_version = Some(value(&arguments, &mut index)?.parse().map_err(|_| {
+                    CliError::usage("--language-version must be an unsigned integer")
+                })?);
+            }
+            "--check" => check = true,
+            option => return Err(CliError::usage(format!("unknown option `{option}`"))),
+        }
+        index += 1;
+    }
+    if project.is_some() && language_version.is_some() {
+        return Err(CliError::usage(
+            "--project and --language-version are mutually exclusive",
+        ));
+    }
+    Ok(FormatOptions {
+        file: file.ok_or_else(|| CliError::usage("--file is required"))?,
+        project,
+        language_version,
+        check,
+    })
+}
+
+fn parse_project(arguments: Vec<String>) -> Result<ProjectOptions, CliError> {
+    let mut project = None;
+    let mut format = OutputFormat::Table;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "-p" | "--project" => project = Some(value(&arguments, &mut index)?.into()),
+            "--format" => format = OutputFormat::parse(value(&arguments, &mut index)?)?,
+            option => return Err(CliError::usage(format!("unknown option `{option}`"))),
+        }
+        index += 1;
+    }
+    Ok(ProjectOptions {
+        project: project.ok_or_else(|| CliError::usage("--project is required"))?,
+        format,
+    })
 }
 
 fn parse_query(arguments: Vec<String>) -> Result<QueryOptions, CliError> {
@@ -375,6 +447,36 @@ fn run_sync(options: CommonOptions) -> Result<(), CliError> {
     )
 }
 
+fn run_format(options: FormatOptions) -> Result<(), CliError> {
+    let source = fs::read(&options.file).map_err(|error| {
+        CliError::new(
+            EXIT_IO,
+            format!("cannot read {}: {error}", options.file.display()),
+        )
+    })?;
+    let language_version = if let Some(project) = options.project {
+        ProjectConfig::load(project)
+            .map_err(|error| CliError::project(error.to_string()))?
+            .language_version
+    } else {
+        options.language_version.unwrap_or(1)
+    };
+    let formatted = format_source(&source, language_version)
+        .map_err(|error| CliError::project(error.to_string()))?;
+    if options.check {
+        if source != formatted.as_bytes() {
+            return Err(CliError::project(format!(
+                "{} is not canonically formatted",
+                options.file.display()
+            )));
+        }
+        return Ok(());
+    }
+    io::stdout()
+        .write_all(formatted.as_bytes())
+        .map_err(output_error)
+}
+
 fn run_check(options: CommonOptions) -> Result<(), CliError> {
     let database = EmbeddedDatabase::open(&options.database).map_err(CliError::database)?;
     let status = database.check().map_err(CliError::database)?;
@@ -431,6 +533,131 @@ fn run_stats(options: CommonOptions) -> Result<(), CliError> {
             QueryValue::Integer(counts.adjacency as i64),
             QueryValue::Integer(counts.properties as i64),
         ]],
+        options.format,
+        &mut io::stdout(),
+    )
+}
+
+fn run_schema(options: CommonOptions) -> Result<(), CliError> {
+    let database = EmbeddedDatabase::open(&options.database).map_err(CliError::database)?;
+    let rows = schema_rows(database.schemas().map_err(CliError::database)?);
+    render_table_data(
+        &[
+            "identity",
+            "state",
+            "property",
+            "property_type",
+            "constraints",
+        ],
+        &rows,
+        options.format,
+        &mut io::stdout(),
+    )
+}
+
+fn schema_rows(values: Vec<SchemaInfo>) -> Vec<Vec<QueryValue>> {
+    let mut rows = Vec::new();
+    for schema in values {
+        if schema.properties.is_empty() {
+            rows.push(vec![
+                QueryValue::String(schema.identity),
+                QueryValue::String(schema.state),
+                QueryValue::Null,
+                QueryValue::Null,
+                QueryValue::Integer(schema.constraints as i64),
+            ]);
+            continue;
+        }
+        rows.extend(schema.properties.into_iter().map(|property| {
+            vec![
+                QueryValue::String(schema.identity.clone()),
+                QueryValue::String(schema.state.clone()),
+                QueryValue::String(property.name),
+                QueryValue::String(property.property_type),
+                QueryValue::Integer(schema.constraints as i64),
+            ]
+        }));
+    }
+    rows
+}
+
+fn run_unresolved(options: CommonOptions) -> Result<(), CliError> {
+    let database = EmbeddedDatabase::open(&options.database).map_err(CliError::database)?;
+    let rows = unresolved_rows(database.unresolved().map_err(CliError::database)?)?;
+    render_table_data(
+        &["kind", "internal_id", "identity", "state"],
+        &rows,
+        options.format,
+        &mut io::stdout(),
+    )
+}
+
+fn unresolved_rows(values: Vec<UnresolvedInfo>) -> Result<Vec<Vec<QueryValue>>, CliError> {
+    values
+        .into_iter()
+        .map(|value| {
+            let internal_id = match value.internal_id {
+                None => QueryValue::Null,
+                Some(id) => QueryValue::Integer(i64::try_from(id).map_err(|_| {
+                    CliError::new(
+                        EXIT_DATABASE,
+                        "internal Node ID exceeds the query Integer range",
+                    )
+                })?),
+            };
+            Ok(vec![
+                QueryValue::String(value.kind),
+                internal_id,
+                QueryValue::String(value.identity),
+                QueryValue::String(value.state),
+            ])
+        })
+        .collect()
+}
+
+fn run_imports(options: ProjectOptions) -> Result<(), CliError> {
+    let config = ProjectConfig::load(&options.project)
+        .map_err(|error| CliError::project(error.to_string()))?;
+    let rows = config
+        .modules
+        .into_iter()
+        .map(|(path, id)| {
+            vec![
+                QueryValue::String(path.display().to_string()),
+                QueryValue::String(id.to_string()),
+            ]
+        })
+        .collect::<Vec<_>>();
+    render_table_data(
+        &["module", "stable_id"],
+        &rows,
+        options.format,
+        &mut io::stdout(),
+    )
+}
+
+fn run_warnings(options: ProjectOptions) -> Result<(), CliError> {
+    let compiled = ProjectCompiler::new()
+        .compile(&options.project)
+        .map_err(|error| CliError::project(error.to_string()))?;
+    let rows = compiled
+        .diagnostics
+        .into_iter()
+        .map(|diagnostic| {
+            vec![
+                QueryValue::String(
+                    diagnostic
+                        .module
+                        .map_or_else(|| "<project>".to_owned(), |path| path.display().to_string()),
+                ),
+                QueryValue::String(diagnostic.diagnostic.code().to_string()),
+                QueryValue::String(diagnostic.diagnostic.message().to_owned()),
+            ]
+        })
+        .collect::<Vec<_>>();
+    render_table_data(
+        &["module", "code", "message"],
+        &rows,
         options.format,
         &mut io::stdout(),
     )
@@ -567,20 +794,15 @@ fn handle_admin(
             writeln!(stderr, "synchronized").map_err(output_error)?;
         }
         ":schema" => {
-            let schemas = database.schemas().map_err(CliError::database)?;
-            let rows = schemas
-                .into_iter()
-                .map(|schema| {
-                    vec![
-                        QueryValue::String(schema.identity),
-                        QueryValue::String(schema.state),
-                        QueryValue::Integer(schema.properties.len() as i64),
-                        QueryValue::Integer(schema.constraints as i64),
-                    ]
-                })
-                .collect::<Vec<_>>();
+            let rows = schema_rows(database.schemas().map_err(CliError::database)?);
             render_table_data(
-                &["identity", "state", "properties", "constraints"],
+                &[
+                    "identity",
+                    "state",
+                    "property",
+                    "property_type",
+                    "constraints",
+                ],
                 &rows,
                 options.common.format,
                 stdout,
@@ -588,18 +810,9 @@ fn handle_admin(
         }
         ":unresolved" => {
             let values = database.unresolved().map_err(CliError::database)?;
-            let rows = values
-                .into_iter()
-                .map(|value| {
-                    vec![
-                        QueryValue::String(value.kind),
-                        QueryValue::String(value.identity),
-                        QueryValue::String(value.state),
-                    ]
-                })
-                .collect::<Vec<_>>();
+            let rows = unresolved_rows(values)?;
             render_table_data(
-                &["kind", "identity", "state"],
+                &["kind", "internal_id", "identity", "state"],
                 &rows,
                 options.common.format,
                 stdout,

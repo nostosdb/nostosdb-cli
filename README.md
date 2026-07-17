@@ -9,7 +9,13 @@ nostos query 'MATCH (n:Person) RETURN n.name' --database graph.ndb
 nostos query --file report.cypher --database graph.ndb --format json
 cat report.cypher | nostos query --database graph.ndb --format jsonl
 nostos query --database graph.ndb
+nostos format --file graph.nostos
+nostos format --file graph.nostos --check
 ```
+
+`format` sends one complete source file through the public Core canonical formatter. By default it writes the formatted source to stdout without changing the input; `--check` returns project exit code 3 when the input is not already canonical. Use `--project` to read `language_version` from `nostos.toml`, or supply `--language-version` explicitly.
+
+Standalone `schema`, `unresolved`, `imports`, and `warnings` commands expose the same administration data as the REPL in table or JSON form for scripts and Agent Skills.
 
 Interactive statements end with `;` and may span lines. Administrative commands include `:status`, `:sync`, `:schema`, `:warnings`, `:imports`, `:unresolved`, and explicit NDB-only transactions. Source Mode queries use `--project`; writes additionally require `--owner MODULE_ID` and are routed through the content-hash-guarded source writer.
 
