@@ -1,6 +1,6 @@
 [package]
 name = "nostos-cli"
-description = "Stage 0 command-line skeleton for NostosDB"
+description = "Command-line and interactive client for NostosDB"
 edition = "2024"
 license = "SSPL-1.0"
 publish = false
