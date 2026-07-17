@@ -1,5 +1,10 @@
 nostos-cli
 
 Licensed under the Server Side Public License, Version 1 (SSPL-1.0).
-Copyright ownership and attribution are pending legal review before public release.
-This NOTICE contains no additional third-party attribution notices.
+No final copyright holder or contribution entity has been legally approved.
+External contributions and distribution releases remain closed.
+
+The CLI links the sibling nostos-engine and therefore includes the Core's
+permissively licensed Rust dependencies and bundled public-domain SQLite.
+Exact per-package license texts/SBOM and final attribution packaging remain
+legal release blockers.

@@ -1,7 +1,7 @@
 # Security policy for nostos-cli
 
-> Stage 0 placeholder: the private vulnerability-reporting process will be finalized before public preview in Stage 12.
+There is no supported CLI release. Current `main` is evaluation-only.
 
-Do not disclose suspected vulnerabilities in a public issue. Until a private reporting channel is published, coordinate privately with the repository owner without including secrets or exploit details in public systems.
+Privately report argument/file handling, terminal escape, output-boundary, source-authority, conflict-check, or credential-exposure issues through **Security → Report a vulnerability** after private reporting is enabled. If absent, request enablement publicly without details and wait. Use synthetic data and redact paths/secrets.
 
-No supported release exists yet, and no security-response service-level agreement is offered.
+Maintainers target acknowledgement in three business days and triage in seven, without an SLA or bounty.

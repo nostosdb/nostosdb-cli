@@ -2,6 +2,8 @@
 
 Source-available command-line consumer of the NostosDB engine, licensed under SSPL-1.0.
 
+Public-preview source only: no supported binary, installer, stable database format, or external contribution intake exists. See [PREVIEW.md](PREVIEW.md), [SECURITY.md](SECURITY.md), and [CLA status](CLA.md).
+
 The CLI provides one-shot, query-file, piped-stdin, and interactive query modes over the public `nostos-engine` facade. It also provides synchronization, integrity checks, inspection, project diagnostics, and graph statistics.
 
 ```bash
