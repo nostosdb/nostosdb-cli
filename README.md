@@ -4,6 +4,8 @@ Source-available command-line consumer of the NostosDB engine, licensed under SS
 
 Public-preview source only: no supported binary, installer, stable database format, or external contribution intake exists. See [PREVIEW.md](PREVIEW.md), [SECURITY.md](SECURITY.md), and [CLA status](CLA.md).
 
+The [distribution contract](DISTRIBUTION.md) provides the same Core-containing `nostos` executable through npm, pinned `npx` zero-install execution, Homebrew, and direct archives. Candidate launchers, packages, archives, and workflows are implemented, but none of those channels is published.
+
 The CLI provides one-shot, query-file, piped-stdin, and interactive query modes over the public `nostos-engine` facade. It also provides synchronization, integrity checks, inspection, project diagnostics, and graph statistics.
 
 ```bash
@@ -35,6 +37,10 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 cargo run -- --help
 cargo run -- --version
+python3 -m unittest discover -s distribution/tests -v
+npm test --prefix npm
+npm run verify --prefix npm
+python3 distribution/scripts/verify_local.py --skills-root ../nostos-skills
 ```
 
 ## License

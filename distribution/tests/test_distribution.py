@@ -1,0 +1,298 @@
+import json
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS = ROOT / "distribution" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
+from common import archive_name, host_target, read_json, release_manifest, sha256
+from verify_source import candidate_matrix
+
+
+def invoke(*arguments, cwd=None):
+    return subprocess.run(
+        [str(value) for value in arguments],
+        cwd=str(cwd) if cwd else None,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+class DistributionTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = Path(tempfile.mkdtemp(prefix="nostos-distribution-test-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.temporary)
+
+    def fake_binary(self):
+        binary = self.temporary / "nostos"
+        binary.write_text(
+            "#!{}\n"
+            "import sys\n"
+            "if sys.argv[1:] == ['--version']:\n"
+            "    print('nostos 0.1.0')\n"
+            "elif sys.argv[1:] == ['--help']:\n"
+            "    print('Usage: nostos COMMAND')\n"
+            "else:\n"
+            "    sys.exit(2)\n".format(sys.executable),
+            encoding="utf-8",
+        )
+        binary.chmod(0o755)
+        return binary
+
+    def metadata(self):
+        metadata = self.temporary / "metadata"
+        metadata.mkdir()
+        (metadata / "SBOM.spdx.json").write_text(
+            '{"spdxVersion":"SPDX-2.3"}\n', encoding="utf-8"
+        )
+        (metadata / "THIRD_PARTY_LICENSES.json").write_text(
+            '{"metadata_version":1}\n', encoding="utf-8"
+        )
+        return metadata
+
+    def native_evidence(self, target):
+        evidence = self.temporary / (target + ".json")
+        evidence.write_text(
+            json.dumps(
+                {
+                    "evidence_version": 1,
+                    "host_target": target,
+                    "passed": True,
+                    "target": target,
+                    "translated": False,
+                    "tests": {
+                        "help": {"returncode": 0, "stdout": "Usage: nostos\n"},
+                        "version": {
+                            "returncode": 0,
+                            "stdout": "nostos 0.1.0\n",
+                        },
+                    },
+                    "version": "0.1.0",
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return evidence
+
+    def test_manifest_declares_six_native_targets(self):
+        manifest = release_manifest()
+        self.assertEqual(manifest["version"], "0.1.0")
+        self.assertEqual(
+            set(manifest["targets"]),
+            {
+                "aarch64-apple-darwin",
+                "x86_64-apple-darwin",
+                "aarch64-pc-windows-msvc",
+                "x86_64-pc-windows-msvc",
+                "aarch64-unknown-linux-gnu",
+                "x86_64-unknown-linux-gnu",
+            },
+        )
+        self.assertEqual(
+            len({details["npm_package"] for details in manifest["targets"].values()}),
+            6,
+        )
+
+    def test_candidate_workflow_matrix_matches_release_manifest_exactly(self):
+        manifest = release_manifest()
+        workflow = (ROOT / ".github/workflows/attest-candidate.yml").read_text(
+            encoding="utf-8"
+        )
+        expected = {
+            target: {
+                "archive": archive_name(
+                    manifest["version"], target, details["archive"]
+                ),
+                "binary": "nostos.exe" if "windows" in target else "nostos",
+                "runner": details["runner"],
+            }
+            for target, details in manifest["targets"].items()
+        }
+        self.assertEqual(candidate_matrix(workflow), expected)
+
+    def test_native_smoke_and_deterministic_archive(self):
+        target = host_target()
+        binary = self.fake_binary()
+        evidence = self.temporary / "native.json"
+        smoke = invoke(
+            sys.executable,
+            SCRIPTS / "smoke_candidate.py",
+            "--target",
+            target,
+            "--binary",
+            binary,
+            "--output",
+            evidence,
+        )
+        self.assertEqual(smoke.returncode, 0, smoke.stderr)
+        self.assertTrue(read_json(evidence)["passed"])
+        outputs = []
+        for name in ("first", "second"):
+            output = self.temporary / name
+            assembled = invoke(
+                sys.executable,
+                SCRIPTS / "assemble_candidate.py",
+                "--target",
+                target,
+                "--binary",
+                binary,
+                "--native-evidence",
+                evidence,
+                "--metadata",
+                self.metadata() if name == "first" else self.temporary / "metadata",
+                "--output",
+                output,
+            )
+            self.assertEqual(assembled.returncode, 0, assembled.stderr)
+            archive = Path(assembled.stdout.strip())
+            verified = invoke(
+                sys.executable,
+                SCRIPTS / "verify_candidate.py",
+                "--archive",
+                archive,
+            )
+            self.assertEqual(verified.returncode, 0, verified.stderr)
+            outputs.append(archive)
+        self.assertEqual(sha256(outputs[0]), sha256(outputs[1]))
+
+    def test_archive_refuses_non_native_or_incomplete_evidence(self):
+        target = host_target()
+        evidence = self.native_evidence(target)
+        payload = read_json(evidence)
+        payload["host_target"] = "x86_64-pc-windows-msvc"
+        evidence.write_text(json.dumps(payload), encoding="utf-8")
+        result = invoke(
+            sys.executable,
+            SCRIPTS / "assemble_candidate.py",
+            "--target",
+            target,
+            "--binary",
+            self.fake_binary(),
+            "--native-evidence",
+            evidence,
+            "--metadata",
+            self.metadata(),
+            "--output",
+            self.temporary / "refused",
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("native evidence host_target mismatch", result.stderr)
+
+    def test_stages_unpublished_npm_launcher_and_native_package(self):
+        target = host_target()
+        output = self.temporary / "npm"
+        binary = self.fake_binary()
+        result = invoke(
+            sys.executable,
+            SCRIPTS / "stage_npm_candidate.py",
+            "--target",
+            target,
+            "--binary",
+            binary,
+            "--output",
+            output,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["published"])
+        self.assertEqual(payload["launcher"]["name"], "@nostosdb/cli")
+        launcher = output / payload["launcher"]["filename"]
+        platform = output / payload["platform"]["filename"]
+        self.assertTrue(launcher.is_file())
+        self.assertTrue(platform.is_file())
+        for archive in (launcher, platform):
+            with tarfile.open(archive, mode="r:gz") as package:
+                contents = {
+                    member.name: package.extractfile(member).read()
+                    for member in package.getmembers()
+                    if member.isfile()
+                }
+            self.assertEqual(contents["package/LICENSE"], (ROOT / "LICENSE").read_bytes())
+            self.assertEqual(contents["package/NOTICE"], (ROOT / "NOTICE").read_bytes())
+            self.assertEqual(contents["package/README.md"], (ROOT / "README.md").read_bytes())
+            if archive == platform:
+                executable = "nostos.exe" if "windows" in target else "nostos"
+                self.assertEqual(
+                    contents["package/bin/{}".format(executable)], binary.read_bytes()
+                )
+
+    def test_renders_two_architecture_homebrew_formula(self):
+        archives = {}
+        for target in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
+            archive = self.temporary / archive_name("0.1.0", target, "tar.gz")
+            archive.write_bytes(target.encode("ascii"))
+            record = {
+                "archive_sha256": sha256(archive),
+                "published": False,
+                "target": target,
+            }
+            archive.with_name(archive.name + ".manifest.json").write_text(
+                json.dumps(record), encoding="utf-8"
+            )
+            archives[target] = archive
+        formula = self.temporary / "Formula" / "nostos.rb"
+        rendered = invoke(
+            sys.executable,
+            SCRIPTS / "render_homebrew.py",
+            "--arm64-archive",
+            archives["aarch64-apple-darwin"],
+            "--x64-archive",
+            archives["x86_64-apple-darwin"],
+            "--output",
+            formula,
+        )
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        text = formula.read_text(encoding="utf-8")
+        self.assertIn('version "0.1.0"', text)
+        self.assertIn("on_arm do", text)
+        self.assertIn("on_intel do", text)
+        syntax = invoke("ruby", "-c", formula)
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Homebrew targets macOS")
+    def test_renders_non_publishable_native_host_smoke_formula(self):
+        target = host_target()
+        archive = self.temporary / archive_name("0.1.0", target, "tar.gz")
+        archive.write_bytes(target.encode("ascii"))
+        archive.with_name(archive.name + ".manifest.json").write_text(
+            json.dumps(
+                {
+                    "archive_sha256": sha256(archive),
+                    "published": False,
+                    "target": target,
+                }
+            ),
+            encoding="utf-8",
+        )
+        formula = self.temporary / "smoke" / "Formula" / "nostos.rb"
+        rendered = invoke(
+            sys.executable,
+            SCRIPTS / "render_homebrew.py",
+            "--host-smoke-archive",
+            archive,
+            "--output",
+            formula,
+        )
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        text = formula.read_text(encoding="utf-8")
+        self.assertIn("HOST-ONLY SMOKE FORMULA. NEVER PUBLISH.", text)
+        self.assertEqual(text.count(archive.resolve().as_uri()), 2)
+        syntax = invoke("ruby", "-c", formula)
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

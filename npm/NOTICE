@@ -1,0 +1,3 @@
+The candidate launcher delegates to the NostosDB CLI and does not contain the Core implementation.
+
+Candidate assembly copies the canonical repository NOTICE and third-party attribution bundle beside distributed artifacts.

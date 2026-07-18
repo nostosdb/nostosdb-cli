@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: SSPL-1.0
+# Generated candidate template. Publication requires separate authorization.
+
+class Nostos < Formula
+  desc "Source-first property graph database CLI"
+  homepage "https://github.com/nostosdb/nostos-cli"
+  version "@VERSION@"
+  license "SSPL-1.0"
+
+  on_arm do
+    url "@ARM64_URL@"
+    sha256 "@ARM64_SHA256@"
+  end
+
+  on_intel do
+    url "@X64_URL@"
+    sha256 "@X64_SHA256@"
+  end
+
+  def install
+    bin.install "nostos"
+  end
+
+  test do
+    assert_equal "nostos #{version}", shell_output("#{bin}/nostos --version").strip
+  end
+end

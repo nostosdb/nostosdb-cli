@@ -1,0 +1,10 @@
+{
+  "name": "@nostosdb/cli-win32-arm64",
+  "version": "0.1.0",
+  "description": "NostosDB CLI for Windows ARM64",
+  "license": "SSPL-1.0",
+  "os": ["win32"],
+  "cpu": ["arm64"],
+  "files": ["bin/nostos.exe", "LICENSE", "NOTICE", "README.md"],
+  "publishConfig": {"access": "public"}
+}
