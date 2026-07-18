@@ -2053,7 +2053,7 @@ fn display_value(value: &QueryValue) -> String {
         QueryValue::Integer(value) => value.to_string(),
         QueryValue::Float(value) => value.to_string(),
         QueryValue::String(value) => value.clone(),
-        QueryValue::Bytes(value) => value.iter().map(|byte| format!("{byte:02x}")).collect(),
+        QueryValue::Bytes(value) => hex(value),
         QueryValue::Duration(value) => format!("{value}ns"),
         QueryValue::List(values) => format!(
             "[{}]",
@@ -2084,10 +2084,7 @@ fn write_json_value(output: &mut impl Write, value: &QueryValue) -> Result<(), C
         QueryValue::Float(value) => write!(output, "{value}").map_err(output_error),
         QueryValue::String(value) => write_json_string(output, value),
         QueryValue::Bytes(value) => {
-            let text = value
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>();
+            let text = hex(value);
             write_json_string(output, &text)
         }
         QueryValue::Duration(value) => write!(output, "{value}").map_err(output_error),
@@ -2143,6 +2140,16 @@ fn write_json_value(output: &mut impl Write, value: &QueryValue) -> Result<(), C
             write!(output, "}}").map_err(output_error)
         }
     }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        output.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    output
 }
 
 fn write_json_string(output: &mut impl Write, value: &str) -> Result<(), CliError> {
