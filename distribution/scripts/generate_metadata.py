@@ -45,7 +45,7 @@ def main() -> int:
             },
             "dataLicense": "CC0-1.0",
             "documentNamespace": (
-                "https://github.com/nostosdb/nostos-cli/sbom/{}".format(version)
+                "https://github.com/nostosdb/nostosdb-cli/sbom/{}".format(version)
             ),
             "name": "nostos-cli-{}".format(version),
             "packages": [

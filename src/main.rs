@@ -6,6 +6,12 @@ use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use nostos_client::{
+    Client, ClientError, ClientRequest, ErrorCode as RemoteErrorCode, SNAPSHOT_CHUNK_BYTES,
+    ServerResponse,
+};
 use nostos_engine::{
     DatabaseError, Digest, EmbeddedDatabase, Parameters, ProjectCompiler, ProjectConfig,
     QueryResult, QueryValue, SchemaInfo, SourceWriteOptions, SourceWriter, StatementResult,
@@ -23,8 +29,15 @@ const EXIT_IO: u8 = 7;
 const HELP: &str = "NostosDB command-line client
 
 Usage:
-    nostos query [QUERY] [--file PATH] [--database PATH] [--project PATH]
+    nostos query [QUERY] [--file PATH] [--database PATH|NAME] [--project PATH]
+                 [--server nostos://HOST:PORT] [--credential-file PATH]
                  [--owner MODULE_ID] [--format table|json|jsonl|csv] [--interactive]
+    nostos server ping --server nostos://HOST:PORT [--credential-file PATH]
+    nostos database create NAME|list|inspect NAME|rename NAME NEW_NAME
+                    |drop NAME --confirm NAME|snapshot NAME --output PATH
+                    |restore NAME --file PATH|export-logical NAME --output PATH
+                    |import-logical NAME --file PATH
+                    --server nostos://HOST:PORT [--credential-file PATH]
     nostos sync --project PATH --database PATH [--format table|json]
     nostos format --file PATH [--project PATH | --language-version VERSION] [--check]
     nostos check|inspect|stats|schema|unresolved --database PATH [--format table|json]
@@ -100,6 +113,33 @@ struct QueryOptions {
     file: Option<PathBuf>,
     owner: Option<String>,
     interactive: bool,
+    remote: Option<RemoteOptions>,
+}
+
+#[derive(Debug)]
+struct RemoteOptions {
+    server: String,
+    credential_file: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+enum DatabaseCommand {
+    Create(String),
+    List,
+    Inspect(String),
+    Rename { name: String, new_name: String },
+    Drop { name: String, confirm_name: String },
+    Snapshot { name: String, output: PathBuf },
+    Restore { name: String, file: PathBuf },
+    ExportLogical { name: String, output: PathBuf },
+    ImportLogical { name: String, file: PathBuf },
+}
+
+#[derive(Debug)]
+struct DatabaseOptions {
+    command: DatabaseCommand,
+    remote: RemoteOptions,
+    format: OutputFormat,
 }
 
 #[derive(Debug)]
@@ -142,6 +182,8 @@ fn run() -> Result<(), CliError> {
     let command = arguments.remove(0);
     match command.as_str() {
         "query" => run_query(parse_query(arguments)?),
+        "server" => run_server(parse_server(arguments)?),
+        "database" => run_database(parse_database(arguments)?),
         "sync" => run_sync(parse_common(arguments, true)?),
         "format" => run_format(parse_format(arguments)?),
         "check" => run_check(parse_common(arguments, false)?),
@@ -211,17 +253,25 @@ fn parse_project(arguments: Vec<String>) -> Result<ProjectOptions, CliError> {
 
 fn parse_query(arguments: Vec<String>) -> Result<QueryOptions, CliError> {
     let mut database: Option<PathBuf> = None;
+    let mut database_explicit = false;
     let mut project: Option<PathBuf> = None;
     let mut format = OutputFormat::Table;
     let mut query = None;
     let mut file = None;
     let mut owner = None;
     let mut interactive = false;
+    let mut server = None;
+    let mut credential_file = None;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
-            "-d" | "--database" => database = Some(value(&arguments, &mut index)?.into()),
+            "-d" | "--database" => {
+                database = Some(value(&arguments, &mut index)?.into());
+                database_explicit = true;
+            }
             "-p" | "--project" => project = Some(value(&arguments, &mut index)?.into()),
+            "--server" => server = Some(value(&arguments, &mut index)?.to_owned()),
+            "--credential-file" => credential_file = Some(value(&arguments, &mut index)?.into()),
             "-f" | "--file" => file = Some(value(&arguments, &mut index)?.into()),
             "--owner" => owner = Some(value(&arguments, &mut index)?.to_owned()),
             "--format" => format = OutputFormat::parse(value(&arguments, &mut index)?)?,
@@ -249,6 +299,17 @@ fn parse_query(arguments: Vec<String>) -> Result<QueryOptions, CliError> {
             "--interactive cannot be combined with QUERY or --file",
         ));
     }
+    if server.is_some() && !database_explicit {
+        return Err(CliError::usage("remote query requires --database NAME"));
+    }
+    if server.is_some() && (project.is_some() || owner.is_some()) {
+        return Err(CliError::usage(
+            "remote query cannot use --project or --owner; import through the server lifecycle",
+        ));
+    }
+    if server.is_none() && credential_file.is_some() {
+        return Err(CliError::usage("--credential-file requires --server"));
+    }
     let database = database.unwrap_or_else(|| {
         project
             .as_ref()
@@ -264,6 +325,179 @@ fn parse_query(arguments: Vec<String>) -> Result<QueryOptions, CliError> {
         file,
         owner,
         interactive,
+        remote: server.map(|server| RemoteOptions {
+            server,
+            credential_file,
+        }),
+    })
+}
+
+fn parse_server(mut arguments: Vec<String>) -> Result<RemoteOptions, CliError> {
+    if arguments.first().map(String::as_str) != Some("ping") {
+        return Err(CliError::usage(
+            "server command must be `nostos server ping`",
+        ));
+    }
+    arguments.remove(0);
+    parse_remote_options(arguments)
+}
+
+fn parse_remote_options(arguments: Vec<String>) -> Result<RemoteOptions, CliError> {
+    let mut server = None;
+    let mut credential_file = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--server" => server = Some(value(&arguments, &mut index)?.to_owned()),
+            "--credential-file" => credential_file = Some(value(&arguments, &mut index)?.into()),
+            option => return Err(CliError::usage(format!("unknown remote option `{option}`"))),
+        }
+        index += 1;
+    }
+    Ok(RemoteOptions {
+        server: server.ok_or_else(|| CliError::usage("--server is required"))?,
+        credential_file,
+    })
+}
+
+fn parse_database(mut arguments: Vec<String>) -> Result<DatabaseOptions, CliError> {
+    if arguments.is_empty() {
+        return Err(CliError::usage("database operation is required"));
+    }
+    let operation = arguments.remove(0);
+    let mut server = None;
+    let mut credential_file = None;
+    let mut confirm = None;
+    let mut output = None;
+    let mut file = None;
+    let mut format = OutputFormat::Table;
+    let mut operands = Vec::new();
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--server" => server = Some(value(&arguments, &mut index)?.to_owned()),
+            "--credential-file" => credential_file = Some(value(&arguments, &mut index)?.into()),
+            "--confirm" => confirm = Some(value(&arguments, &mut index)?.to_owned()),
+            "--output" => output = Some(value(&arguments, &mut index)?.into()),
+            "--file" => file = Some(value(&arguments, &mut index)?.into()),
+            "--format" => format = OutputFormat::parse(value(&arguments, &mut index)?)?,
+            option if option.starts_with('-') => {
+                return Err(CliError::usage(format!(
+                    "unknown database option `{option}`"
+                )));
+            }
+            operand => operands.push(operand.to_owned()),
+        }
+        index += 1;
+    }
+    let exact = |count: usize| {
+        if operands.len() == count {
+            Ok(())
+        } else {
+            Err(CliError::usage(format!(
+                "database {operation} expects {count} name argument(s)"
+            )))
+        }
+    };
+    let command = match operation.as_str() {
+        "create" => {
+            exact(1)?;
+            DatabaseCommand::Create(operands.remove(0))
+        }
+        "list" => {
+            exact(0)?;
+            DatabaseCommand::List
+        }
+        "inspect" => {
+            exact(1)?;
+            DatabaseCommand::Inspect(operands.remove(0))
+        }
+        "rename" => {
+            exact(2)?;
+            DatabaseCommand::Rename {
+                name: operands.remove(0),
+                new_name: operands.remove(0),
+            }
+        }
+        "drop" => {
+            exact(1)?;
+            DatabaseCommand::Drop {
+                name: operands.remove(0),
+                confirm_name: confirm
+                    .clone()
+                    .ok_or_else(|| CliError::usage("database drop requires --confirm NAME"))?,
+            }
+        }
+        "snapshot" => {
+            exact(1)?;
+            DatabaseCommand::Snapshot {
+                name: operands.remove(0),
+                output: output
+                    .clone()
+                    .ok_or_else(|| CliError::usage("database snapshot requires --output PATH"))?,
+            }
+        }
+        "restore" => {
+            exact(1)?;
+            DatabaseCommand::Restore {
+                name: operands.remove(0),
+                file: file
+                    .clone()
+                    .ok_or_else(|| CliError::usage("database restore requires --file PATH"))?,
+            }
+        }
+        "export-logical" => {
+            exact(1)?;
+            DatabaseCommand::ExportLogical {
+                name: operands.remove(0),
+                output: output.clone().ok_or_else(|| {
+                    CliError::usage("database export-logical requires --output PATH")
+                })?,
+            }
+        }
+        "import-logical" => {
+            exact(1)?;
+            DatabaseCommand::ImportLogical {
+                name: operands.remove(0),
+                file: file.clone().ok_or_else(|| {
+                    CliError::usage("database import-logical requires --file PATH")
+                })?,
+            }
+        }
+        _ => {
+            return Err(CliError::usage(format!(
+                "unknown database operation `{operation}`"
+            )));
+        }
+    };
+    if !matches!(command, DatabaseCommand::Drop { .. }) && confirm.is_some() {
+        return Err(CliError::usage("--confirm is valid only for database drop"));
+    }
+    if !matches!(
+        command,
+        DatabaseCommand::Snapshot { .. } | DatabaseCommand::ExportLogical { .. }
+    ) && output.is_some()
+    {
+        return Err(CliError::usage(
+            "--output is valid only for snapshot or export-logical",
+        ));
+    }
+    if !matches!(
+        command,
+        DatabaseCommand::Restore { .. } | DatabaseCommand::ImportLogical { .. }
+    ) && file.is_some()
+    {
+        return Err(CliError::usage(
+            "--file is valid only for restore or import-logical",
+        ));
+    }
+    Ok(DatabaseOptions {
+        command,
+        remote: RemoteOptions {
+            server: server.ok_or_else(|| CliError::usage("--server is required"))?,
+            credential_file,
+        },
+        format,
     })
 }
 
@@ -301,10 +535,13 @@ fn value<'a>(arguments: &'a [String], index: &mut usize) -> Result<&'a str, CliE
 }
 
 fn run_query(options: QueryOptions) -> Result<(), CliError> {
+    if options.remote.is_some() {
+        return run_remote_query(options);
+    }
     if let Some(project) = &options.common.project {
         synchronize(project, &options.common.database)?;
     }
-    let mut database = open_or_create(&options.common.database)?;
+    let mut database = Some(open_or_create(&options.common.database)?);
     if options.interactive
         || (options.query.is_none() && options.file.is_none() && io::stdin().is_terminal())
     {
@@ -331,17 +568,330 @@ fn run_query(options: QueryOptions) -> Result<(), CliError> {
         let result = execute_one(&options, &mut database, &statement)?;
         render_statement(&result, options.common.format, &mut io::stdout())?;
     }
-    database.checkpoint().map_err(CliError::database)
+    database
+        .as_mut()
+        .expect("query execution keeps the database open")
+        .checkpoint()
+        .map_err(CliError::database)
+}
+
+fn run_remote_query(options: QueryOptions) -> Result<(), CliError> {
+    let remote = options
+        .remote
+        .as_ref()
+        .expect("checked by remote query dispatch");
+    let database_name = options
+        .common
+        .database
+        .to_str()
+        .ok_or_else(|| CliError::usage("remote Database name must be UTF-8"))?
+        .to_owned();
+    let mut client = connect_remote(remote)?;
+    expect_selected(client.request(ClientRequest::SelectDatabase {
+        database: database_name,
+    }))?;
+    if options.interactive
+        || (options.query.is_none() && options.file.is_none() && io::stdin().is_terminal())
+    {
+        return remote_repl(&options, &mut client);
+    }
+    let source = if let Some(query) = &options.query {
+        query.clone()
+    } else if let Some(file) = &options.file {
+        fs::read_to_string(file).map_err(|error| {
+            CliError::new(EXIT_IO, format!("cannot read {}: {error}", file.display()))
+        })?
+    } else {
+        let mut source = String::new();
+        io::stdin()
+            .read_to_string(&mut source)
+            .map_err(|error| CliError::new(EXIT_IO, format!("cannot read stdin: {error}")))?;
+        source
+    };
+    let statements = split_complete(&source, true)?;
+    if statements.is_empty() {
+        return Err(CliError::usage("query input is empty"));
+    }
+    for statement in statements {
+        let response = remote_request(
+            &mut client,
+            ClientRequest::Query {
+                query: statement,
+                parameters: Default::default(),
+                read_only: false,
+                stream: false,
+                limits: None,
+            },
+        )?;
+        let ServerResponse::Result { statement } = response else {
+            return Err(CliError::new(
+                EXIT_DATABASE,
+                "server returned an unexpected query response",
+            ));
+        };
+        render_wire_statement(&statement, options.common.format, &mut io::stdout())?;
+    }
+    Ok(())
+}
+
+fn remote_repl(options: &QueryOptions, client: &mut Client) -> Result<(), CliError> {
+    let stdin = io::stdin();
+    let mut input = stdin.lock();
+    let mut stdout = io::stdout();
+    let mut stderr = io::stderr();
+    let mut line = String::new();
+    let mut buffer = String::new();
+    loop {
+        write!(
+            stderr,
+            "{}",
+            if buffer.is_empty() {
+                "nostos> "
+            } else {
+                "...> "
+            }
+        )
+        .map_err(output_error)?;
+        stderr.flush().map_err(output_error)?;
+        line.clear();
+        if input.read_line(&mut line).map_err(|error| {
+            CliError::new(EXIT_IO, format!("cannot read interactive input: {error}"))
+        })? == 0
+        {
+            if !buffer.trim().is_empty() {
+                return Err(CliError::usage("unterminated query at end of input"));
+            }
+            break;
+        }
+        let trimmed = line.trim();
+        if buffer.is_empty() && trimmed.starts_with(':') {
+            let request = match trimmed {
+                ":quit" | ":q" => break,
+                ":help" => {
+                    writeln!(stdout, ":help :ping :begin :commit :rollback :quit")
+                        .map_err(output_error)?;
+                    continue;
+                }
+                ":ping" => ClientRequest::Ping,
+                ":begin" => ClientRequest::Begin,
+                ":commit" => ClientRequest::Commit,
+                ":rollback" => ClientRequest::Rollback,
+                _ => {
+                    writeln!(stderr, "error: unknown remote REPL command `{trimmed}`")
+                        .map_err(output_error)?;
+                    continue;
+                }
+            };
+            match remote_request(client, request) {
+                Ok(ServerResponse::Pong) => {
+                    writeln!(stderr, "server is ready").map_err(output_error)?
+                }
+                Ok(ServerResponse::Transaction { state, results }) => {
+                    for statement in results {
+                        render_wire_statement(&statement, options.common.format, &mut stdout)?;
+                    }
+                    writeln!(stderr, "{state}").map_err(output_error)?;
+                }
+                Ok(_) => writeln!(stderr, "server acknowledged request").map_err(output_error)?,
+                Err(error) => writeln!(stderr, "error: {}", error.message).map_err(output_error)?,
+            }
+            continue;
+        }
+        buffer.push_str(&line);
+        let (statements, remainder) = split_with_remainder(&buffer)?;
+        buffer = remainder;
+        if buffer.trim().is_empty() {
+            buffer.clear();
+        }
+        for statement in statements {
+            match remote_request(
+                client,
+                ClientRequest::Query {
+                    query: statement,
+                    parameters: Default::default(),
+                    read_only: false,
+                    stream: false,
+                    limits: None,
+                },
+            ) {
+                Ok(ServerResponse::Result { statement }) => {
+                    render_wire_statement(&statement, options.common.format, &mut stdout)?
+                }
+                Ok(ServerResponse::Queued { .. }) => {
+                    writeln!(stderr, "queued").map_err(output_error)?
+                }
+                Ok(_) => writeln!(stderr, "unexpected server response").map_err(output_error)?,
+                Err(error) => writeln!(stderr, "error: {}", error.message).map_err(output_error)?,
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_server(options: RemoteOptions) -> Result<(), CliError> {
+    let mut client = connect_remote(&options)?;
+    let response = remote_request(&mut client, ClientRequest::Ping)?;
+    if !matches!(response, ServerResponse::Pong) {
+        return Err(CliError::new(
+            EXIT_DATABASE,
+            "server returned an unexpected ping response",
+        ));
+    }
+    render_table_data(
+        &["server", "status"],
+        &[vec![
+            QueryValue::String(options.server),
+            QueryValue::String("ready".to_owned()),
+        ]],
+        OutputFormat::Table,
+        &mut io::stdout(),
+    )
+}
+
+fn run_database(options: DatabaseOptions) -> Result<(), CliError> {
+    let mut client = connect_remote(&options.remote)?;
+    match options.command {
+        DatabaseCommand::Create(name) => {
+            let response = remote_request(&mut client, ClientRequest::DatabaseCreate { name })?;
+            let ServerResponse::DatabaseCreated { database } = response else {
+                return unexpected_database_response();
+            };
+            render_database_summaries(&[database], options.format)
+        }
+        DatabaseCommand::List => {
+            let response = remote_request(&mut client, ClientRequest::DatabaseList)?;
+            let ServerResponse::DatabaseList { databases } = response else {
+                return unexpected_database_response();
+            };
+            render_database_summaries(&databases, options.format)
+        }
+        DatabaseCommand::Inspect(name) => {
+            let response = remote_request(
+                &mut client,
+                ClientRequest::DatabaseInspect { database: name },
+            )?;
+            let ServerResponse::DatabaseInfo { database } = response else {
+                return unexpected_database_response();
+            };
+            render_table_data(
+                &[
+                    "id",
+                    "name",
+                    "state",
+                    "ndb_format",
+                    "generation",
+                    "checksum",
+                    "healthy",
+                    "schemas",
+                    "nodes",
+                    "edges",
+                ],
+                &[vec![
+                    QueryValue::String(database.summary.id),
+                    QueryValue::String(database.summary.name),
+                    QueryValue::String(database.summary.state),
+                    QueryValue::Integer(i64::from(database.ndb_format_version)),
+                    integer(database.generation)?,
+                    QueryValue::String(database.logical_checksum),
+                    QueryValue::Boolean(database.healthy),
+                    integer(database.schemas)?,
+                    integer(database.nodes)?,
+                    integer(database.edges)?,
+                ]],
+                options.format,
+                &mut io::stdout(),
+            )
+        }
+        DatabaseCommand::Rename { name, new_name } => {
+            let response = remote_request(
+                &mut client,
+                ClientRequest::DatabaseRename {
+                    database: name,
+                    new_name,
+                },
+            )?;
+            let ServerResponse::DatabaseRenamed { database } = response else {
+                return unexpected_database_response();
+            };
+            render_database_summaries(&[database], options.format)
+        }
+        DatabaseCommand::Drop { name, confirm_name } => {
+            let response = remote_request(
+                &mut client,
+                ClientRequest::DatabaseDrop {
+                    database: name,
+                    confirm_name,
+                },
+            )?;
+            let ServerResponse::DatabaseDropped { database_id, name } = response else {
+                return unexpected_database_response();
+            };
+            render_table_data(
+                &["id", "name", "state"],
+                &[vec![
+                    QueryValue::String(database_id),
+                    QueryValue::String(name),
+                    QueryValue::String("dropped".to_owned()),
+                ]],
+                options.format,
+                &mut io::stdout(),
+            )
+        }
+        DatabaseCommand::Snapshot { name, output } => {
+            export_snapshot(&mut client, &name, &output)?;
+            println!("snapshot: {}", output.display());
+            Ok(())
+        }
+        DatabaseCommand::Restore { name, file } => {
+            import_snapshot(&mut client, &name, &file)?;
+            println!("restored: {name}");
+            Ok(())
+        }
+        DatabaseCommand::ExportLogical { name, output } => {
+            let response =
+                remote_request(&mut client, ClientRequest::LogicalExport { database: name })?;
+            let ServerResponse::LogicalPackage { package } = response else {
+                return unexpected_database_response();
+            };
+            let mut bytes = serde_json::to_vec_pretty(&package)
+                .map_err(|error| CliError::new(EXIT_IO, error.to_string()))?;
+            bytes.push(b'\n');
+            write_new_output(&output, &bytes)?;
+            println!("logical package: {}", output.display());
+            Ok(())
+        }
+        DatabaseCommand::ImportLogical { name, file } => {
+            let bytes = fs::read(&file).map_err(|error| {
+                CliError::new(EXIT_IO, format!("cannot read {}: {error}", file.display()))
+            })?;
+            let package = serde_json::from_slice(&bytes)
+                .map_err(|error| CliError::usage(format!("invalid logical package: {error}")))?;
+            let response = remote_request(
+                &mut client,
+                ClientRequest::LogicalImport {
+                    database: name.clone(),
+                    package,
+                },
+            )?;
+            let ServerResponse::LogicalImported { modules } = response else {
+                return unexpected_database_response();
+            };
+            println!("imported {modules} module(s) into {name}");
+            Ok(())
+        }
+    }
 }
 
 fn execute_one(
     options: &QueryOptions,
-    database: &mut EmbeddedDatabase,
+    database: &mut Option<EmbeddedDatabase>,
     statement: &str,
 ) -> Result<StatementResult, CliError> {
     let parameters = Parameters::new();
     if prepare(statement).is_ok() {
         return database
+            .as_mut()
+            .expect("query execution keeps the database open")
             .execute(statement, &parameters)
             .map_err(CliError::database);
     }
@@ -368,7 +918,12 @@ fn execute_one(
                 )
             })?;
             let mut writer = SourceWriter::default();
-            return writer
+            let mut open = database
+                .take()
+                .expect("query execution keeps the database open");
+            open.checkpoint().map_err(CliError::database)?;
+            drop(open);
+            let result = writer
                 .execute(
                     project,
                     &options.common.database,
@@ -381,9 +936,14 @@ fn execute_one(
                 )
                 .map(|report| StatementResult::Write(report.write))
                 .map_err(map_source_write);
+            *database =
+                Some(EmbeddedDatabase::open(&options.common.database).map_err(CliError::database)?);
+            return result;
         }
     }
     database
+        .as_mut()
+        .expect("query execution keeps the database open")
         .execute(statement, &parameters)
         .map_err(CliError::database)
 }
@@ -689,7 +1249,7 @@ fn run_doctor(options: CommonOptions) -> Result<(), CliError> {
     )
 }
 
-fn repl(options: QueryOptions, database: &mut EmbeddedDatabase) -> Result<(), CliError> {
+fn repl(options: QueryOptions, database: &mut Option<EmbeddedDatabase>) -> Result<(), CliError> {
     let stdin = io::stdin();
     let mut input = stdin.lock();
     let mut stdout = io::stdout();
@@ -759,7 +1319,7 @@ fn repl(options: QueryOptions, database: &mut EmbeddedDatabase) -> Result<(), Cl
 fn handle_admin(
     command: &str,
     options: &QueryOptions,
-    database: &mut EmbeddedDatabase,
+    database: &mut Option<EmbeddedDatabase>,
     transaction: &mut Option<Vec<(String, Parameters)>>,
     stdout: &mut impl Write,
     stderr: &mut impl Write,
@@ -772,7 +1332,11 @@ fn handle_admin(
         )
         .map_err(output_error)?,
         ":status" => {
-            let info = database.info().map_err(CliError::database)?;
+            let info = database
+                .as_ref()
+                .expect("REPL keeps the database open")
+                .info()
+                .map_err(CliError::database)?;
             render_table_data(
                 &["generation", "source_managed"],
                 &[vec![
@@ -789,12 +1353,24 @@ fn handle_admin(
                 .project
                 .as_deref()
                 .ok_or_else(|| CliError::usage(":sync requires --project"))?;
-            synchronize(project, &options.common.database)?;
-            *database = EmbeddedDatabase::open(&options.common.database).map_err(CliError::database)?;
+            let mut open = database.take().expect("REPL keeps the database open");
+            open.checkpoint().map_err(CliError::database)?;
+            drop(open);
+            let synchronization = synchronize(project, &options.common.database);
+            *database = Some(
+                EmbeddedDatabase::open(&options.common.database).map_err(CliError::database)?,
+            );
+            synchronization?;
             writeln!(stderr, "synchronized").map_err(output_error)?;
         }
         ":schema" => {
-            let rows = schema_rows(database.schemas().map_err(CliError::database)?);
+            let rows = schema_rows(
+                database
+                    .as_ref()
+                    .expect("REPL keeps the database open")
+                    .schemas()
+                    .map_err(CliError::database)?,
+            );
             render_table_data(
                 &[
                     "identity",
@@ -809,7 +1385,11 @@ fn handle_admin(
             )?;
         }
         ":unresolved" => {
-            let values = database.unresolved().map_err(CliError::database)?;
+            let values = database
+                .as_ref()
+                .expect("REPL keeps the database open")
+                .unresolved()
+                .map_err(CliError::database)?;
             let rows = unresolved_rows(values)?;
             render_table_data(
                 &["kind", "internal_id", "identity", "state"],
@@ -835,12 +1415,20 @@ fn handle_admin(
             let statements = transaction
                 .take()
                 .ok_or_else(|| CliError::usage("no transaction is active"))?;
-            match database.execute_transaction(&statements) {
+            match database
+                .as_mut()
+                .expect("REPL keeps the database open")
+                .execute_transaction(&statements)
+            {
                 Ok(results) => {
                     for result in results {
                         render_statement(&result, options.common.format, stdout)?;
                     }
-                    database.checkpoint().map_err(CliError::database)?;
+                    database
+                        .as_mut()
+                        .expect("REPL keeps the database open")
+                        .checkpoint()
+                        .map_err(CliError::database)?;
                     writeln!(stderr, "committed").map_err(output_error)?;
                 }
                 Err(error) => {
@@ -914,6 +1502,385 @@ fn render_project_admin(
         options.common.format,
         output,
     )
+}
+
+fn connect_remote(options: &RemoteOptions) -> Result<Client, CliError> {
+    let credential = if let Some(path) = &options.credential_file {
+        fs::read_to_string(path).map_err(|error| {
+            CliError::new(
+                EXIT_IO,
+                format!("cannot read credential file {}: {error}", path.display()),
+            )
+        })?
+    } else {
+        env::var("NOSTOS_CREDENTIAL")
+            .map_err(|_| CliError::usage("set NOSTOS_CREDENTIAL or pass --credential-file PATH"))?
+    };
+    let credential = credential.trim_end_matches(['\r', '\n']);
+    if credential.len() < 32 || credential.chars().any(char::is_whitespace) {
+        return Err(CliError::usage(
+            "credential must be one non-whitespace token of at least 32 characters",
+        ));
+    }
+    Client::connect(&options.server, credential, "nostos-cli").map_err(map_remote_error)
+}
+
+fn remote_request(client: &mut Client, request: ClientRequest) -> Result<ServerResponse, CliError> {
+    client.request(request).map_err(map_remote_error)
+}
+
+fn expect_selected(result: Result<ServerResponse, ClientError>) -> Result<(), CliError> {
+    match result.map_err(map_remote_error)? {
+        ServerResponse::DatabaseSelected { .. } => Ok(()),
+        _ => Err(CliError::new(
+            EXIT_DATABASE,
+            "server returned an unexpected Database-selection response",
+        )),
+    }
+}
+
+fn map_remote_error(error: ClientError) -> CliError {
+    let code = match &error {
+        ClientError::Server {
+            code:
+                RemoteErrorCode::QueryError
+                | RemoteErrorCode::ResourceLimit
+                | RemoteErrorCode::Cancelled,
+            ..
+        } => EXIT_QUERY,
+        ClientError::Protocol(_) => EXIT_USAGE,
+        ClientError::Io(_) | ClientError::Server { .. } => EXIT_DATABASE,
+    };
+    CliError::new(code, error.to_string())
+}
+
+fn frame_response(
+    frame: nostos_client::ServerFrame,
+    request_id: u64,
+) -> Result<ServerResponse, CliError> {
+    if frame.request_id != request_id {
+        return Err(CliError::new(
+            EXIT_DATABASE,
+            format!(
+                "database protocol returned response {} while waiting for {request_id}",
+                frame.request_id
+            ),
+        ));
+    }
+    match frame.response {
+        ServerResponse::Error {
+            code,
+            message,
+            retryable,
+        } => Err(map_remote_error(ClientError::Server {
+            code,
+            message,
+            retryable,
+        })),
+        response => Ok(response),
+    }
+}
+
+fn render_database_summaries(
+    databases: &[nostos_client::DatabaseSummary],
+    format: OutputFormat,
+) -> Result<(), CliError> {
+    let rows = databases
+        .iter()
+        .map(|database| {
+            vec![
+                QueryValue::String(database.id.clone()),
+                QueryValue::String(database.name.clone()),
+                QueryValue::String(database.state.clone()),
+            ]
+        })
+        .collect::<Vec<_>>();
+    render_table_data(&["id", "name", "state"], &rows, format, &mut io::stdout())
+}
+
+fn unexpected_database_response<T>() -> Result<T, CliError> {
+    Err(CliError::new(
+        EXIT_DATABASE,
+        "server returned an unexpected Database administration response",
+    ))
+}
+
+fn export_snapshot(client: &mut Client, name: &str, output: &Path) -> Result<(), CliError> {
+    if output.exists() {
+        return Err(CliError::new(
+            EXIT_IO,
+            format!("refusing to replace existing output {}", output.display()),
+        ));
+    }
+    let temporary = output.with_extension(format!("partial-{}", std::process::id()));
+    let request_id = client
+        .send(ClientRequest::SnapshotExport {
+            database: name.to_owned(),
+        })
+        .map_err(map_remote_error)?;
+    let result = (|| {
+        let start = frame_response(client.read().map_err(map_remote_error)?, request_id)?;
+        let ServerResponse::SnapshotStart { total_bytes } = start else {
+            return Err(CliError::new(
+                EXIT_DATABASE,
+                "snapshot stream did not start correctly",
+            ));
+        };
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)
+            .map_err(|error| {
+                CliError::new(
+                    EXIT_IO,
+                    format!("cannot create {}: {error}", temporary.display()),
+                )
+            })?;
+        let mut expected_sequence = 0_u64;
+        let mut received = 0_u64;
+        loop {
+            match frame_response(client.read().map_err(map_remote_error)?, request_id)? {
+                ServerResponse::SnapshotChunk { sequence, data } => {
+                    if sequence != expected_sequence {
+                        return Err(CliError::new(
+                            EXIT_DATABASE,
+                            "snapshot chunk sequence is not contiguous",
+                        ));
+                    }
+                    let bytes = BASE64.decode(data).map_err(|error| {
+                        CliError::new(EXIT_DATABASE, format!("invalid snapshot chunk: {error}"))
+                    })?;
+                    file.write_all(&bytes).map_err(|error| {
+                        CliError::new(EXIT_IO, format!("cannot write snapshot: {error}"))
+                    })?;
+                    received = received.saturating_add(bytes.len() as u64);
+                    expected_sequence += 1;
+                }
+                ServerResponse::SnapshotEnd { chunks } => {
+                    if chunks != expected_sequence || received != total_bytes {
+                        return Err(CliError::new(
+                            EXIT_DATABASE,
+                            "snapshot byte or chunk count does not match its declaration",
+                        ));
+                    }
+                    file.sync_all().map_err(|error| {
+                        CliError::new(EXIT_IO, format!("cannot persist snapshot: {error}"))
+                    })?;
+                    drop(file);
+                    fs::rename(&temporary, output).map_err(|error| {
+                        CliError::new(
+                            EXIT_IO,
+                            format!("cannot install {}: {error}", output.display()),
+                        )
+                    })?;
+                    return Ok(());
+                }
+                _ => {
+                    return Err(CliError::new(
+                        EXIT_DATABASE,
+                        "unexpected frame in snapshot stream",
+                    ));
+                }
+            }
+        }
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temporary);
+    }
+    result
+}
+
+fn import_snapshot(client: &mut Client, name: &str, path: &Path) -> Result<(), CliError> {
+    let mut file = fs::File::open(path).map_err(|error| {
+        CliError::new(EXIT_IO, format!("cannot read {}: {error}", path.display()))
+    })?;
+    let total_bytes = file
+        .metadata()
+        .map_err(|error| CliError::new(EXIT_IO, error.to_string()))?
+        .len();
+    let response = remote_request(
+        client,
+        ClientRequest::SnapshotRestoreBegin {
+            database: name.to_owned(),
+            total_bytes,
+        },
+    )?;
+    if !matches!(
+        response,
+        ServerResponse::SnapshotRestore { ref state, bytes: 0 } if state == "ready"
+    ) {
+        return unexpected_database_response();
+    }
+    let mut buffer = vec![0_u8; SNAPSHOT_CHUNK_BYTES];
+    let mut sequence = 0_u64;
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| CliError::new(EXIT_IO, format!("cannot read snapshot: {error}")))?;
+        if read == 0 {
+            break;
+        }
+        let response = remote_request(
+            client,
+            ClientRequest::SnapshotRestoreChunk {
+                sequence,
+                data: BASE64.encode(&buffer[..read]),
+            },
+        )?;
+        if !matches!(
+            response,
+            ServerResponse::SnapshotRestore { ref state, .. } if state == "chunk_accepted"
+        ) {
+            return unexpected_database_response();
+        }
+        sequence += 1;
+    }
+    let response = remote_request(client, ClientRequest::SnapshotRestoreCommit)?;
+    if matches!(
+        response,
+        ServerResponse::SnapshotRestore { ref state, bytes } if state == "restored" && bytes == total_bytes
+    ) {
+        Ok(())
+    } else {
+        unexpected_database_response()
+    }
+}
+
+fn write_new_output(path: &Path, bytes: &[u8]) -> Result<(), CliError> {
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .map_err(|error| {
+            CliError::new(
+                EXIT_IO,
+                format!("cannot create output {}: {error}", path.display()),
+            )
+        })?;
+    file.write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| {
+            CliError::new(
+                EXIT_IO,
+                format!("cannot persist output {}: {error}", path.display()),
+            )
+        })
+}
+
+fn render_wire_statement(
+    statement: &serde_json::Value,
+    format: OutputFormat,
+    output: &mut impl Write,
+) -> Result<(), CliError> {
+    match statement.get("kind").and_then(serde_json::Value::as_str) {
+        Some("read") => render_wire_query(
+            statement
+                .get("result")
+                .ok_or_else(|| CliError::new(EXIT_DATABASE, "read result is missing"))?,
+            format,
+            output,
+        ),
+        Some("write") => {
+            let write = statement
+                .get("write")
+                .ok_or_else(|| CliError::new(EXIT_DATABASE, "write result is missing"))?;
+            if let Some(result) = write.get("result").filter(|value| !value.is_null()) {
+                render_wire_query(result, format, output)?;
+                if format != OutputFormat::Table {
+                    return Ok(());
+                }
+            }
+            let summary = write
+                .get("summary")
+                .and_then(serde_json::Value::as_object)
+                .ok_or_else(|| CliError::new(EXIT_DATABASE, "write summary is missing"))?;
+            let columns = [
+                "nodes_created",
+                "edges_created",
+                "nodes_deleted",
+                "edges_deleted",
+                "properties_set",
+                "properties_removed",
+            ];
+            let row = columns
+                .iter()
+                .map(|column| {
+                    summary
+                        .get(*column)
+                        .cloned()
+                        .map(json_query_value)
+                        .ok_or_else(|| {
+                            CliError::new(EXIT_DATABASE, "write summary field is missing")
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            render_table_data(&columns, &[row], format, output)
+        }
+        _ => Err(CliError::new(
+            EXIT_DATABASE,
+            "statement result has an unknown kind",
+        )),
+    }
+}
+
+fn render_wire_query(
+    result: &serde_json::Value,
+    format: OutputFormat,
+    output: &mut impl Write,
+) -> Result<(), CliError> {
+    let columns = result
+        .get("columns")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| CliError::new(EXIT_DATABASE, "query columns are missing"))?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| CliError::new(EXIT_DATABASE, "query column is not text"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let rows = result
+        .get("rows")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| CliError::new(EXIT_DATABASE, "query rows are missing"))?
+        .iter()
+        .map(|row| {
+            row.as_array()
+                .ok_or_else(|| CliError::new(EXIT_DATABASE, "query row is not an array"))
+                .map(|values| values.iter().cloned().map(json_query_value).collect())
+        })
+        .collect::<Result<Vec<Vec<QueryValue>>, _>>()?;
+    let columns = columns.iter().map(String::as_str).collect::<Vec<_>>();
+    render_table_data(&columns, &rows, format, output)
+}
+
+fn json_query_value(value: serde_json::Value) -> QueryValue {
+    match value {
+        serde_json::Value::Null => QueryValue::Null,
+        serde_json::Value::Bool(value) => QueryValue::Boolean(value),
+        serde_json::Value::Number(value) => value
+            .as_i64()
+            .map(QueryValue::Integer)
+            .or_else(|| value.as_f64().map(QueryValue::Float))
+            .unwrap_or_else(|| QueryValue::String(value.to_string())),
+        serde_json::Value::String(value) => QueryValue::String(value),
+        serde_json::Value::Array(values) => {
+            QueryValue::List(values.into_iter().map(json_query_value).collect())
+        }
+        serde_json::Value::Object(values) => QueryValue::Map(
+            values
+                .into_iter()
+                .map(|(name, value)| (name, json_query_value(value)))
+                .collect(),
+        ),
+    }
+}
+
+fn integer(value: u64) -> Result<QueryValue, CliError> {
+    i64::try_from(value)
+        .map(QueryValue::Integer)
+        .map_err(|_| CliError::new(EXIT_DATABASE, "server integer exceeds CLI range"))
 }
 
 fn render_statement(
@@ -1312,6 +2279,68 @@ mod tests {
         assert_eq!(
             String::from_utf8(csv).expect("UTF-8"),
             "value\n\"a,\"\"b\n\"\n"
+        );
+    }
+
+    #[test]
+    fn remote_query_and_guarded_database_commands_parse_without_http_concepts() {
+        let query = parse_query(vec![
+            "RETURN 1".to_owned(),
+            "--server".to_owned(),
+            "nostos://127.0.0.1:7878".to_owned(),
+            "--database".to_owned(),
+            "knowledge".to_owned(),
+            "--credential-file".to_owned(),
+            "client.token".to_owned(),
+        ])
+        .expect("remote query parses");
+        assert_eq!(
+            query.remote.expect("remote options exist").server,
+            "nostos://127.0.0.1:7878"
+        );
+        assert_eq!(query.common.database, PathBuf::from("knowledge"));
+
+        let drop = parse_database(vec![
+            "drop".to_owned(),
+            "knowledge".to_owned(),
+            "--confirm".to_owned(),
+            "knowledge".to_owned(),
+            "--server".to_owned(),
+            "nostos://127.0.0.1:7878".to_owned(),
+        ])
+        .expect("guarded drop parses");
+        assert!(matches!(
+            drop.command,
+            DatabaseCommand::Drop { ref name, ref confirm_name }
+                if name == "knowledge" && confirm_name == "knowledge"
+        ));
+        assert!(
+            parse_database(vec![
+                "drop".to_owned(),
+                "knowledge".to_owned(),
+                "--server".to_owned(),
+                "nostos://127.0.0.1:7878".to_owned(),
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn remote_wire_results_use_the_existing_machine_formats() {
+        let statement = serde_json::json!({
+            "kind": "read",
+            "result": {
+                "columns": ["value"],
+                "rows": [[1], [2]],
+                "ordered": true
+            }
+        });
+        let mut output = Vec::new();
+        render_wire_statement(&statement, OutputFormat::Jsonl, &mut output)
+            .expect("wire result renders");
+        assert_eq!(
+            String::from_utf8(output).expect("UTF-8"),
+            "{\"value\":1}\n{\"value\":2}\n"
         );
     }
 }

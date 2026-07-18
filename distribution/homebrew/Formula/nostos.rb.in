@@ -3,7 +3,7 @@
 
 class Nostos < Formula
   desc "Source-first property graph database CLI"
-  homepage "https://github.com/nostosdb/nostos-cli"
+  homepage "https://github.com/nostosdb/nostosdb-cli"
   version "@VERSION@"
   license "SSPL-1.0"
 
