@@ -19,9 +19,10 @@ def copy_distribution_files(destination: Path) -> None:
 
 
 def npm_pack(source: Path, destination: Path) -> dict:
+    npm = "npm.cmd" if sys.platform == "win32" else "npm"
     completed = subprocess.run(
         [
-            "npm",
+            npm,
             "pack",
             "--ignore-scripts",
             "--json",

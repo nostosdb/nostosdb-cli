@@ -35,6 +35,22 @@ class DistributionTests(unittest.TestCase):
         shutil.rmtree(self.temporary)
 
     def fake_binary(self):
+        if sys.platform == "win32":
+            binary = self.temporary / "nostos.cmd"
+            binary.write_text(
+                "@echo off\n"
+                "if \"%~1\"==\"--version\" (\n"
+                "  echo nostos 0.1.0\n"
+                "  exit /b 0\n"
+                ")\n"
+                "if \"%~1\"==\"--help\" (\n"
+                "  echo Usage: nostos COMMAND\n"
+                "  exit /b 0\n"
+                ")\n"
+                "exit /b 2\n",
+                encoding="utf-8",
+            )
+            return binary
         binary = self.temporary / "nostos"
         binary.write_text(
             "#!{}\n"
@@ -172,7 +188,9 @@ class DistributionTests(unittest.TestCase):
         target = host_target()
         evidence = self.native_evidence(target)
         payload = read_json(evidence)
-        payload["host_target"] = "x86_64-pc-windows-msvc"
+        payload["host_target"] = next(
+            candidate for candidate in release_manifest()["targets"] if candidate != target
+        )
         evidence.write_text(json.dumps(payload), encoding="utf-8")
         result = invoke(
             sys.executable,
