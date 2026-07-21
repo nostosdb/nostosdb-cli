@@ -1,4 +1,4 @@
-# Security policy for nostos-cli
+# Security policy for nostosdb-cli
 
 There is no supported CLI release. Current `main` is evaluation-only.
 

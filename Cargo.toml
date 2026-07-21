@@ -13,8 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 base64 = "=0.22.1"
-nostos-client = { path = "../nostos-server/client", version = "0.1.0" }
-nostos-engine = { path = "../nostos-core/crates/nostos-engine", version = "0.1.0" }
+nostos-client = { path = "../nostosdb-server/client", version = "0.1.0" }
+nostos-engine = { path = "../nostosdb-core/crates/nostos-engine", version = "0.1.0" }
 serde_json = "1.0.150"
 
 [lints.rust]

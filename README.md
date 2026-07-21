@@ -1,4 +1,4 @@
-# nostos-cli
+# nostosdb-cli
 
 Source-available command-line consumer of the NostosDB engine, licensed under SSPL-1.0.
 
@@ -54,7 +54,7 @@ cargo run -- --version
 python3 -m unittest discover -s distribution/tests -v
 npm test --prefix npm
 npm run verify --prefix npm
-python3 distribution/scripts/verify_local.py --skills-root ../nostos-skills
+python3 distribution/scripts/verify_local.py --skills-root ../skills
 ```
 
 ## License

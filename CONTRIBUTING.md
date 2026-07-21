@@ -1,4 +1,4 @@
-# Contributing to nostos-cli
+# Contributing to nostosdb-cli
 
 The CLI source is available for evaluation, but external contributions are closed pending the project legal/CLA gates. Do not submit patches or pull requests expecting inclusion; [CLA.md](CLA.md) is status only.
 

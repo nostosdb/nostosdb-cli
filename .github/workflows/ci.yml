@@ -20,29 +20,29 @@ jobs:
     steps:
       - name: Check out CLI
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with: {path: nostos-cli}
+        with: {path: nostosdb-cli}
       - name: Check out Core
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with: {repository: nostosdb/nostosdb-core, path: nostos-core}
+        with: {repository: nostosdb/nostosdb-core, path: nostosdb-core}
       - name: Check out Server client
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with: {repository: nostosdb/nostosdb-server, path: nostos-server}
+        with: {repository: nostosdb/nostosdb-server, path: nostosdb-server}
       - name: Configure Rust
         run: rustup toolchain install ${{ matrix.rust }} --profile minimal --component rustfmt,clippy
       - name: Format
-        working-directory: nostos-cli
+        working-directory: nostosdb-cli
         run: rustup run ${{ matrix.rust }} cargo fmt --all --check
       - name: Check
-        working-directory: nostos-cli
+        working-directory: nostosdb-cli
         run: rustup run ${{ matrix.rust }} cargo check --all-targets --all-features --locked
       - name: Clippy
-        working-directory: nostos-cli
+        working-directory: nostosdb-cli
         run: rustup run ${{ matrix.rust }} cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: Test
-        working-directory: nostos-cli
+        working-directory: nostosdb-cli
         run: rustup run ${{ matrix.rust }} cargo test --all-features --locked
       - name: Help and version
-        working-directory: nostos-cli
+        working-directory: nostosdb-cli
         run: rustup run ${{ matrix.rust }} cargo run --locked -- --version
       - name: Configure minimum Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -51,10 +51,10 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: {python-version: "3.13"}
       - name: Verify npm launcher and platform selection
-        working-directory: nostos-cli/npm
+        working-directory: nostosdb-cli/npm
         run: npm test && npm run verify && npm pack --dry-run --json
       - name: Verify candidate tooling
-        working-directory: nostos-cli
+        working-directory: nostosdb-cli
         run: |
           python -m compileall -q distribution/scripts distribution/tests
           python distribution/scripts/verify_source.py

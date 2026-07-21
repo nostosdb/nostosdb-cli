@@ -1,4 +1,4 @@
-# Agent instructions for nostos-cli
+# Agent instructions for nostosdb-cli
 
 Follow the Root `AGENTS.md` when working in the multi-repository workspace.
 

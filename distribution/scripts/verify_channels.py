@@ -173,7 +173,7 @@ def fixture_diagnostic(project: Path, *, env=None):
     return diagnostic(
         [
             sys.executable,
-            project / ".agents" / "scripts" / "nostos_core.py",
+            project / ".agents" / "skills" / "nostos" / "scripts" / "nostos_core.py",
             "run",
             "--project",
             project,
@@ -201,7 +201,7 @@ def main() -> int:
     try:
         skills = args.skills_root.resolve()
         if not (skills / "adapters/codex/run_fixture.py").is_file():
-            raise CandidateError("invalid nostos-skills root: {}".format(skills))
+            raise CandidateError("invalid skills root: {}".format(skills))
         real_npx = shutil.which("npx")
         if real_npx is None:
             raise CandidateError("npx is required for channel verification")
