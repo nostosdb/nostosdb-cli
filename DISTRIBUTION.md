@@ -8,7 +8,7 @@ The first distribution implementation must produce the same CLI version and beha
 
 - `npm install --global @nostosdb/cli@VERSION`;
 - `npx --yes --package=@nostosdb/cli@VERSION nostos ...`;
-- `brew install nostosdb/tap/nostos`; and
+- `brew install nostosdb/tap/nostosdb` (the combined CLI and daemon formula); and
 - signed/checksummed `.tar.gz` or `.zip` release archives.
 
 The target matrix is macOS 13+ on Apple Silicon and Intel, Windows 10/11 on x64 and ARM64, and Ubuntu 22.04/24.04 LTS on x64 and ARM64. A target must pass native smoke and conformance tests before it is advertised. Linux initially uses the declared GNU/glibc baseline; musl is a separate future artifact.
@@ -17,6 +17,8 @@ The npm launcher is a thin command dispatcher. It selects an exact-version OS/CP
 
 All channel artifacts originate from the same reviewed Git tag and release manifest. No existing version may be replaced. Candidate workflows may build and verify packages, but publication remains separately authorized and legally gated.
 
-The candidate source is under [`npm/`](npm/) and [`distribution/`](distribution/). The manual workflow builds all six declared native targets, requires target-native smoke evidence, verifies direct/npm/npx fixture equivalence, attests review archives, and tests the Homebrew formula on Apple Silicon and Intel without publishing any channel. Homebrew 6 local-path installation runs only in its developer verification mode with automatic updates disabled; it creates no tap and the ephemeral runner removes the formula afterward.
+The candidate source is under [`npm/`](npm/) and [`distribution/`](distribution/). The manual workflow builds all six declared native targets, requires target-native smoke evidence, verifies direct/npm/npx fixture equivalence, attests review archives, and retains the historical CLI-only Homebrew candidate test on Apple Silicon and Intel without publishing any channel. The public formula contract is the combined `nostosdb` template in `nostosdb-server`; the older local `nostos.rb` template exists only for Stage 13 evidence and must not be published. Homebrew 6 local-path installation runs only in its developer verification mode with automatic updates disabled; it creates no tap and the ephemeral runner removes the formula afterward.
+
+The planned `@nostosdb/server` global package belongs to the Server distribution and depends on this exact matching `@nostosdb/cli` package. It exposes both `nostosd` and `nostos`; this repository continues to own only the CLI launcher and `nostos` platform packages. No `@nostosdb/core` npm package is part of either installation.
 
 See the Root distribution and release policies in a complete NostosDB workspace for the canonical package layout, Skill fallback rules, acceptance criteria, and publication gates.
