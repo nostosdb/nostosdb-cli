@@ -13,7 +13,6 @@ SCRIPTS = ROOT / "distribution" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from common import archive_name, host_target, read_json, release_manifest, sha256
-from verify_source import candidate_matrix
 
 
 def invoke(*arguments, cwd=None):
@@ -121,23 +120,6 @@ class DistributionTests(unittest.TestCase):
             len({details["npm_package"] for details in manifest["targets"].values()}),
             6,
         )
-
-    def test_candidate_workflow_matrix_matches_release_manifest_exactly(self):
-        manifest = release_manifest()
-        workflow = (ROOT / ".github/workflows/attest-candidate.yml").read_text(
-            encoding="utf-8"
-        )
-        expected = {
-            target: {
-                "archive": archive_name(
-                    manifest["version"], target, details["archive"]
-                ),
-                "binary": "nostos.exe" if "windows" in target else "nostos",
-                "runner": details["runner"],
-            }
-            for target, details in manifest["targets"].items()
-        }
-        self.assertEqual(candidate_matrix(workflow), expected)
 
     def test_native_smoke_and_deterministic_archive(self):
         target = host_target()

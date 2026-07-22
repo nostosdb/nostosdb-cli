@@ -4,7 +4,7 @@ Source-available command-line consumer of the NostosDB engine, licensed under SS
 
 Public-preview source only: no supported binary, installer, stable database format, or external contribution intake exists. See [PREVIEW.md](PREVIEW.md), [SECURITY.md](SECURITY.md), and [CLA status](CLA.md).
 
-The [distribution contract](DISTRIBUTION.md) provides the same Core-containing `nostos` executable through npm, pinned `npx` zero-install execution, Homebrew, and direct archives. Candidate launchers, packages, archives, and workflows are implemented, but none of those channels is published.
+The [distribution contract](DISTRIBUTION.md) provides the same Core-containing `nostos` executable through npm, pinned `npx` zero-install execution, Homebrew, and direct archives. Candidate launchers, packages, archives, and local verification tools are implemented, but none of those channels is published.
 
 The CLI provides one-shot, query-file, piped-stdin, and interactive query modes. Embedded and Source Mode call the public `nostos-engine` facade. Server Mode uses the thin `nostos-client` protocol crate and never opens daemon-managed files or depends on HTTP endpoints. It also provides synchronization, integrity checks, inspection, project diagnostics, graph statistics, and named Database administration.
 
