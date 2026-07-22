@@ -40,7 +40,7 @@ class DistributionTests(unittest.TestCase):
             binary.write_text(
                 "@echo off\n"
                 "if \"%~1\"==\"--version\" (\n"
-                "  echo nostos 0.1.0\n"
+                "  echo nostos 0.0.1\n"
                 "  exit /b 0\n"
                 ")\n"
                 "if \"%~1\"==\"--help\" (\n"
@@ -56,7 +56,7 @@ class DistributionTests(unittest.TestCase):
             "#!{}\n"
             "import sys\n"
             "if sys.argv[1:] == ['--version']:\n"
-            "    print('nostos 0.1.0')\n"
+            "    print('nostos 0.0.1')\n"
             "elif sys.argv[1:] == ['--help']:\n"
             "    print('Usage: nostos COMMAND')\n"
             "else:\n"
@@ -91,10 +91,10 @@ class DistributionTests(unittest.TestCase):
                         "help": {"returncode": 0, "stdout": "Usage: nostos\n"},
                         "version": {
                             "returncode": 0,
-                            "stdout": "nostos 0.1.0\n",
+                            "stdout": "nostos 0.0.1\n",
                         },
                     },
-                    "version": "0.1.0",
+                    "version": "0.0.1",
                 },
                 sort_keys=True,
             )
@@ -105,7 +105,7 @@ class DistributionTests(unittest.TestCase):
 
     def test_manifest_declares_six_native_targets(self):
         manifest = release_manifest()
-        self.assertEqual(manifest["version"], "0.1.0")
+        self.assertEqual(manifest["version"], "0.0.1")
         self.assertEqual(
             set(manifest["targets"]),
             {
@@ -250,7 +250,7 @@ class DistributionTests(unittest.TestCase):
     def test_renders_two_architecture_homebrew_formula(self):
         archives = {}
         for target in ("aarch64-apple-darwin", "x86_64-apple-darwin"):
-            archive = self.temporary / archive_name("0.1.0", target, "tar.gz")
+            archive = self.temporary / archive_name("0.0.1", target, "tar.gz")
             archive.write_bytes(target.encode("ascii"))
             record = {
                 "archive_sha256": sha256(archive),
@@ -274,7 +274,7 @@ class DistributionTests(unittest.TestCase):
         )
         self.assertEqual(rendered.returncode, 0, rendered.stderr)
         text = formula.read_text(encoding="utf-8")
-        self.assertIn('version "0.1.0"', text)
+        self.assertIn('version "0.0.1"', text)
         self.assertIn("on_arm do", text)
         self.assertIn("on_intel do", text)
         syntax = invoke("ruby", "-c", formula)
@@ -283,7 +283,7 @@ class DistributionTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "darwin", "Homebrew targets macOS")
     def test_renders_non_publishable_native_host_smoke_formula(self):
         target = host_target()
-        archive = self.temporary / archive_name("0.1.0", target, "tar.gz")
+        archive = self.temporary / archive_name("0.0.1", target, "tar.gz")
         archive.write_bytes(target.encode("ascii"))
         archive.with_name(archive.name + ".manifest.json").write_text(
             json.dumps(

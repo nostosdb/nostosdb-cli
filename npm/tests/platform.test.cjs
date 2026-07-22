@@ -50,7 +50,7 @@ test("requires an exact-version platform package and executable", (context) => {
   const manifestPath = path.join(packageRoot, "package.json");
   fs.writeFileSync(
     manifestPath,
-    JSON.stringify({ name: "@nostosdb/cli-darwin-arm64", version: "0.1.0" }),
+    JSON.stringify({ name: "@nostosdb/cli-darwin-arm64", version: "0.0.1" }),
   );
   const binary = path.join(binaryDirectory, "nostos");
   fs.writeFileSync(binary, "fixture");
@@ -62,7 +62,7 @@ test("requires an exact-version platform package and executable", (context) => {
     resolveBinary({
       platform: "darwin",
       arch: "arm64",
-      version: "0.1.0",
+      version: "0.0.1",
       resolvePackage,
     }),
     binary,

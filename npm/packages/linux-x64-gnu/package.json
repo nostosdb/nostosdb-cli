@@ -1,6 +1,6 @@
 {
   "name": "@nostosdb/cli-linux-x64-gnu",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "NostosDB CLI for GNU/Linux x64",
   "license": "SSPL-1.0",
   "os": ["linux"],

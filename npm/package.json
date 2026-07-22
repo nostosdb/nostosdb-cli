@@ -1,6 +1,6 @@
 {
   "name": "@nostosdb/cli",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Cross-platform launcher for the NostosDB CLI",
   "license": "SSPL-1.0",
   "bin": {
@@ -18,12 +18,12 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "@nostosdb/cli-darwin-arm64": "0.1.0",
-    "@nostosdb/cli-darwin-x64": "0.1.0",
-    "@nostosdb/cli-linux-arm64-gnu": "0.1.0",
-    "@nostosdb/cli-linux-x64-gnu": "0.1.0",
-    "@nostosdb/cli-win32-arm64": "0.1.0",
-    "@nostosdb/cli-win32-x64": "0.1.0"
+    "@nostosdb/cli-darwin-arm64": "0.0.1",
+    "@nostosdb/cli-darwin-x64": "0.0.1",
+    "@nostosdb/cli-linux-arm64-gnu": "0.0.1",
+    "@nostosdb/cli-linux-x64-gnu": "0.0.1",
+    "@nostosdb/cli-win32-arm64": "0.0.1",
+    "@nostosdb/cli-win32-x64": "0.0.1"
   },
   "publishConfig": {
     "access": "public"

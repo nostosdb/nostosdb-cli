@@ -17,27 +17,27 @@ jobs:
           - runner: macos-14
             target: aarch64-apple-darwin
             binary: nostos
-            archive: nostos-0.1.0-aarch64-apple-darwin.tar.gz
+            archive: nostos-0.0.1-aarch64-apple-darwin.tar.gz
           - runner: macos-15-intel
             target: x86_64-apple-darwin
             binary: nostos
-            archive: nostos-0.1.0-x86_64-apple-darwin.tar.gz
+            archive: nostos-0.0.1-x86_64-apple-darwin.tar.gz
           - runner: windows-11-arm
             target: aarch64-pc-windows-msvc
             binary: nostos.exe
-            archive: nostos-0.1.0-aarch64-pc-windows-msvc.zip
+            archive: nostos-0.0.1-aarch64-pc-windows-msvc.zip
           - runner: windows-2022
             target: x86_64-pc-windows-msvc
             binary: nostos.exe
-            archive: nostos-0.1.0-x86_64-pc-windows-msvc.zip
+            archive: nostos-0.0.1-x86_64-pc-windows-msvc.zip
           - runner: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
             binary: nostos
-            archive: nostos-0.1.0-aarch64-unknown-linux-gnu.tar.gz
+            archive: nostos-0.0.1-aarch64-unknown-linux-gnu.tar.gz
           - runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             binary: nostos
-            archive: nostos-0.1.0-x86_64-unknown-linux-gnu.tar.gz
+            archive: nostos-0.0.1-x86_64-unknown-linux-gnu.tar.gz
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out CLI
@@ -163,9 +163,9 @@ jobs:
       - name: Render candidate formula
         working-directory: nostosdb-cli
         run: |
-          python distribution/scripts/verify_candidate.py --archive dist/downloads/nostos-candidate-aarch64-apple-darwin/candidate/nostos-0.1.0-aarch64-apple-darwin.tar.gz
-          python distribution/scripts/verify_candidate.py --archive dist/downloads/nostos-candidate-x86_64-apple-darwin/candidate/nostos-0.1.0-x86_64-apple-darwin.tar.gz
-          python distribution/scripts/render_homebrew.py --arm64-archive dist/downloads/nostos-candidate-aarch64-apple-darwin/candidate/nostos-0.1.0-aarch64-apple-darwin.tar.gz --x64-archive dist/downloads/nostos-candidate-x86_64-apple-darwin/candidate/nostos-0.1.0-x86_64-apple-darwin.tar.gz --output dist/homebrew/Formula/nostos.rb
+          python distribution/scripts/verify_candidate.py --archive dist/downloads/nostos-candidate-aarch64-apple-darwin/candidate/nostos-0.0.1-aarch64-apple-darwin.tar.gz
+          python distribution/scripts/verify_candidate.py --archive dist/downloads/nostos-candidate-x86_64-apple-darwin/candidate/nostos-0.0.1-x86_64-apple-darwin.tar.gz
+          python distribution/scripts/render_homebrew.py --arm64-archive dist/downloads/nostos-candidate-aarch64-apple-darwin/candidate/nostos-0.0.1-aarch64-apple-darwin.tar.gz --x64-archive dist/downloads/nostos-candidate-x86_64-apple-darwin/candidate/nostos-0.0.1-x86_64-apple-darwin.tar.gz --output dist/homebrew/Formula/nostos.rb
       - name: Verify and install formula from candidate artifacts
         working-directory: nostosdb-cli
         env:

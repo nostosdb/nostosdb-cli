@@ -5,7 +5,7 @@ edition = "2024"
 license = "SSPL-1.0"
 publish = false
 rust-version = "1.85"
-version = "0.1.0"
+version = "0.0.1"
 
 [[bin]]
 name = "nostos"
@@ -13,8 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 base64 = "=0.22.1"
-nostos-client = { path = "../nostosdb-server/client", version = "0.1.0" }
-nostos-engine = { path = "../nostosdb-core/crates/nostos-engine", version = "0.1.0" }
+nostos-client = { path = "../nostosdb-server/client", version = "0.0.1" }
+nostos-engine = { path = "../nostosdb-core/crates/nostos-engine", version = "0.0.1" }
 serde_json = "1.0.150"
 
 [lints.rust]
