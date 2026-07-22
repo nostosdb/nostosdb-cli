@@ -13,6 +13,7 @@ SCRIPTS = ROOT / "distribution" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from common import archive_name, host_target, read_json, release_manifest, sha256
+from verify_channels import channel_diagnostic_environments
 
 
 def invoke(*arguments, cwd=None):
@@ -64,6 +65,27 @@ class DistributionTests(unittest.TestCase):
         )
         binary.chmod(0o755)
         return binary
+
+    def test_channel_diagnostics_explicitly_authorize_each_installed_binary(self):
+        npx_environment = {"PATH": "npx-only"}
+        environments = channel_diagnostic_environments(
+            Path("/candidate/direct/nostos"),
+            Path("/candidate/npm/bin/nostos"),
+            npx_environment,
+            Path("/candidate/homebrew/nostos"),
+        )
+        self.assertIs(environments["npx"], npx_environment)
+        self.assertEqual(
+            environments["direct"]["NOSTOS_BIN"], "/candidate/direct/nostos"
+        )
+        self.assertEqual(
+            environments["npm_global"]["NOSTOS_BIN"],
+            "/candidate/npm/bin/nostos",
+        )
+        self.assertEqual(
+            environments["homebrew"]["NOSTOS_BIN"],
+            "/candidate/homebrew/nostos",
+        )
 
     def metadata(self):
         metadata = self.temporary / "metadata"

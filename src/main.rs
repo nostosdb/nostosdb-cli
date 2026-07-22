@@ -5,6 +5,7 @@ use std::fs;
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -13,9 +14,10 @@ use nostos_client::{
     ServerResponse,
 };
 use nostos_engine::{
-    DatabaseError, Digest, EmbeddedDatabase, Parameters, ProjectCompiler, ProjectConfig,
-    QueryResult, QueryValue, SchemaInfo, SourceWriteOptions, SourceWriter, StatementResult,
-    Synchronizer, UnresolvedInfo, WriteResult, format_source, prepare, prepare_write,
+    CompileError, DatabaseError, Digest, EdgeKind, EmbeddedDatabase, Parameters, ProjectCompiler,
+    ProjectConfig, ProjectDiagnostic, QueryResult, QueryValue, SchemaInfo, SourceWriteOptions,
+    SourceWriter, StableModuleId, StatementResult, SyncError, Synchronizer, UnresolvedInfo,
+    WriteResult, format_source, prepare, prepare_write,
 };
 
 const EXIT_SUCCESS: u8 = 0;
@@ -25,24 +27,29 @@ const EXIT_QUERY: u8 = 4;
 const EXIT_DATABASE: u8 = 5;
 const EXIT_CONFLICT: u8 = 6;
 const EXIT_IO: u8 = 7;
+const MACHINE_FORMATS: &str = "table|json|jsonl|csv";
+static FORMAT_DIAGNOSTIC_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 const HELP: &str = "NostosDB command-line client
 
 Usage:
     nostos query [QUERY] [--file PATH] [--database PATH|NAME] [--project PATH]
                  [--server nostos://HOST:PORT] [--credential-file PATH]
-                 [--owner MODULE_ID] [--format table|json|jsonl|csv] [--interactive]
+                 [--owner MODULE_ID] [--format table|json|jsonl|csv]
+                 [--read-only] [--interactive]
     nostos server ping --server nostos://HOST:PORT [--credential-file PATH]
     nostos database create NAME|list|inspect NAME|rename NAME NEW_NAME
                     |drop NAME --confirm NAME|snapshot NAME --output PATH
                     |restore NAME --file PATH|export-logical NAME --output PATH
                     |import-logical NAME --file PATH
                     --server nostos://HOST:PORT [--credential-file PATH]
-    nostos sync --project PATH --database PATH [--format table|json]
+                    [--format table|json|jsonl|csv]
+    nostos sync --project PATH --database PATH [--format table|json|jsonl|csv]
     nostos format --file PATH [--project PATH | --language-version VERSION] [--check]
-    nostos check|inspect|stats|schema|unresolved --database PATH [--format table|json]
-    nostos imports|warnings --project PATH [--format table|json]
-    nostos doctor --project PATH --database PATH [--format table|json]
+    nostos check|inspect|stats|schema|unresolved --database PATH
+                 [--format table|json|jsonl|csv]
+    nostos imports|warnings --project PATH [--format table|json|jsonl|csv]
+    nostos doctor --project PATH --database PATH [--format table|json|jsonl|csv]
     nostos --help
     nostos --version
 
@@ -112,6 +119,7 @@ struct QueryOptions {
     query: Option<String>,
     file: Option<PathBuf>,
     owner: Option<String>,
+    read_only: bool,
     interactive: bool,
     remote: Option<RemoteOptions>,
 }
@@ -180,6 +188,10 @@ fn run() -> Result<(), CliError> {
         return Ok(());
     }
     let command = arguments.remove(0);
+    if matches!(arguments.as_slice(), [argument] if matches!(argument.as_str(), "-h" | "--help")) {
+        println!("{}", command_help(&command)?);
+        return Ok(());
+    }
     match command.as_str() {
         "query" => run_query(parse_query(arguments)?),
         "server" => run_server(parse_server(arguments)?),
@@ -198,6 +210,33 @@ fn run() -> Result<(), CliError> {
             "unknown command `{command}`\n\n{HELP}"
         ))),
     }
+}
+
+fn command_help(command: &str) -> Result<String, CliError> {
+    let usage = match command {
+        "query" => format!(
+            "Usage: nostos query [QUERY] [--file PATH] [--database PATH|NAME] [--project PATH]\n       [--server nostos://HOST:PORT] [--credential-file PATH]\n       [--owner MODULE_ID] [--format {MACHINE_FORMATS}] [--read-only] [--interactive]\n\n--owner requires --project. --read-only rejects every mutating statement before execution. Use jsonl for streaming output; multi-statement json is one array and multi-statement csv is rejected."
+        ),
+        "server" => "Usage: nostos server ping --server nostos://HOST:PORT [--credential-file PATH]".to_owned(),
+        "database" => format!(
+            "Usage: nostos database create NAME|list|inspect NAME|rename NAME NEW_NAME\n       |drop NAME --confirm NAME|snapshot NAME --output PATH\n       |restore NAME --file PATH|export-logical NAME --output PATH\n       |import-logical NAME --file PATH\n       --server nostos://HOST:PORT [--credential-file PATH] [--format {MACHINE_FORMATS}]"
+        ),
+        "sync" => format!(
+            "Usage: nostos sync --project PATH --database PATH [--format {MACHINE_FORMATS}]"
+        ),
+        "format" => "Usage: nostos format --file PATH [--project PATH | --language-version VERSION] [--check]".to_owned(),
+        "check" | "inspect" | "stats" | "schema" | "unresolved" => format!(
+            "Usage: nostos {command} --database PATH [--format {MACHINE_FORMATS}]"
+        ),
+        "imports" | "warnings" => format!(
+            "Usage: nostos {command} --project PATH [--format {MACHINE_FORMATS}]"
+        ),
+        "doctor" => format!(
+            "Usage: nostos doctor --project PATH --database PATH [--format {MACHINE_FORMATS}]"
+        ),
+        _ => return Err(CliError::usage(format!("unknown command `{command}`\n\n{HELP}"))),
+    };
+    Ok(usage)
 }
 
 fn parse_format(arguments: Vec<String>) -> Result<FormatOptions, CliError> {
@@ -259,6 +298,7 @@ fn parse_query(arguments: Vec<String>) -> Result<QueryOptions, CliError> {
     let mut query = None;
     let mut file = None;
     let mut owner = None;
+    let mut read_only = false;
     let mut interactive = false;
     let mut server = None;
     let mut credential_file = None;
@@ -275,6 +315,7 @@ fn parse_query(arguments: Vec<String>) -> Result<QueryOptions, CliError> {
             "-f" | "--file" => file = Some(value(&arguments, &mut index)?.into()),
             "--owner" => owner = Some(value(&arguments, &mut index)?.to_owned()),
             "--format" => format = OutputFormat::parse(value(&arguments, &mut index)?)?,
+            "--read-only" => read_only = true,
             "--interactive" => interactive = true,
             "-h" | "--help" => {
                 println!("{HELP}");
@@ -298,6 +339,14 @@ fn parse_query(arguments: Vec<String>) -> Result<QueryOptions, CliError> {
         return Err(CliError::usage(
             "--interactive cannot be combined with QUERY or --file",
         ));
+    }
+    if owner.is_some() && project.is_none() {
+        return Err(CliError::usage("--owner requires --project PATH"));
+    }
+    if let Some(owner) = owner.as_deref() {
+        owner
+            .parse::<StableModuleId>()
+            .map_err(|error| CliError::usage(format!("invalid --owner: {error}")))?;
     }
     if server.is_some() && !database_explicit {
         return Err(CliError::usage("remote query requires --database NAME"));
@@ -324,6 +373,7 @@ fn parse_query(arguments: Vec<String>) -> Result<QueryOptions, CliError> {
         query,
         file,
         owner,
+        read_only,
         interactive,
         remote: server.map(|server| RemoteOptions {
             server,
@@ -538,35 +588,28 @@ fn run_query(options: QueryOptions) -> Result<(), CliError> {
     if options.remote.is_some() {
         return run_remote_query(options);
     }
-    if let Some(project) = &options.common.project {
-        synchronize(project, &options.common.database)?;
-    }
-    let mut database = Some(open_or_create(&options.common.database)?);
-    if options.interactive
-        || (options.query.is_none() && options.file.is_none() && io::stdin().is_terminal())
-    {
+    let interactive = options.interactive
+        || (options.query.is_none() && options.file.is_none() && io::stdin().is_terminal());
+    if interactive {
+        synchronize_for_query(&options)?;
+        let mut database = Some(open_or_create(&options.common.database)?);
         return repl(options, &mut database);
     }
-    let source = if let Some(query) = &options.query {
-        query.clone()
-    } else if let Some(file) = &options.file {
-        fs::read_to_string(file).map_err(|error| {
-            CliError::new(EXIT_IO, format!("cannot read {}: {error}", file.display()))
-        })?
-    } else {
-        let mut source = String::new();
-        io::stdin()
-            .read_to_string(&mut source)
-            .map_err(|error| CliError::new(EXIT_IO, format!("cannot read stdin: {error}")))?;
-        source
-    };
-    let statements = split_complete(&source, true)?;
-    if statements.is_empty() {
-        return Err(CliError::usage("query input is empty"));
-    }
+
+    // Input and query preparation intentionally precede synchronization and
+    // database creation, so a typo or unreadable file cannot leave an artifact.
+    let statements = read_and_validate_statements(&options)?;
+    validate_batch_format(options.common.format, statements.len())?;
+    synchronize_for_query(&options)?;
+    let mut database = Some(open_or_create(&options.common.database)?);
+    let mut results = Vec::with_capacity(statements.len());
     for statement in statements {
         let result = execute_one(&options, &mut database, &statement)?;
-        render_statement(&result, options.common.format, &mut io::stdout())?;
+        results.push(result);
+    }
+    render_statement_batch(&results, options.common.format, &mut io::stdout())?;
+    if options.read_only {
+        return Ok(());
     }
     database
         .as_mut()
@@ -576,6 +619,15 @@ fn run_query(options: QueryOptions) -> Result<(), CliError> {
 }
 
 fn run_remote_query(options: QueryOptions) -> Result<(), CliError> {
+    let interactive = options.interactive
+        || (options.query.is_none() && options.file.is_none() && io::stdin().is_terminal());
+    let statements = if interactive {
+        None
+    } else {
+        let statements = read_and_validate_statements(&options)?;
+        validate_batch_format(options.common.format, statements.len())?;
+        Some(statements)
+    };
     let remote = options
         .remote
         .as_ref()
@@ -590,11 +642,34 @@ fn run_remote_query(options: QueryOptions) -> Result<(), CliError> {
     expect_selected(client.request(ClientRequest::SelectDatabase {
         database: database_name,
     }))?;
-    if options.interactive
-        || (options.query.is_none() && options.file.is_none() && io::stdin().is_terminal())
-    {
+    if interactive {
         return remote_repl(&options, &mut client);
     }
+    let statements = statements.expect("non-interactive input was prepared before connecting");
+    let mut results = Vec::with_capacity(statements.len());
+    for statement in statements {
+        let response = remote_request(
+            &mut client,
+            ClientRequest::Query {
+                query: statement,
+                parameters: Default::default(),
+                read_only: options.read_only,
+                stream: false,
+                limits: None,
+            },
+        )?;
+        let ServerResponse::Result { statement } = response else {
+            return Err(CliError::new(
+                EXIT_DATABASE,
+                "server returned an unexpected query response",
+            ));
+        };
+        results.push(statement);
+    }
+    render_wire_statement_batch(&results, options.common.format, &mut io::stdout())
+}
+
+fn read_and_validate_statements(options: &QueryOptions) -> Result<Vec<String>, CliError> {
     let source = if let Some(query) = &options.query {
         query.clone()
     } else if let Some(file) = &options.file {
@@ -612,24 +687,84 @@ fn run_remote_query(options: QueryOptions) -> Result<(), CliError> {
     if statements.is_empty() {
         return Err(CliError::usage("query input is empty"));
     }
-    for statement in statements {
-        let response = remote_request(
-            &mut client,
-            ClientRequest::Query {
-                query: statement,
-                parameters: Default::default(),
-                read_only: false,
-                stream: false,
-                limits: None,
-            },
-        )?;
-        let ServerResponse::Result { statement } = response else {
+    for (index, statement) in statements.iter().enumerate() {
+        validate_statement(statement, options.read_only, index, statements.len())?;
+    }
+    preflight_source_owner(options, &statements)?;
+    Ok(statements)
+}
+
+fn preflight_source_owner(options: &QueryOptions, statements: &[String]) -> Result<(), CliError> {
+    let Some(project) = options.common.project.as_deref() else {
+        return Ok(());
+    };
+    if !statements
+        .iter()
+        .any(|statement| prepare_write(statement).is_ok())
+    {
+        return Ok(());
+    }
+    let owner_text = options
+        .owner
+        .as_deref()
+        .ok_or_else(|| CliError::usage("Source Mode writes require --owner MODULE_ID"))?;
+    let owner = owner_text
+        .parse::<StableModuleId>()
+        .map_err(|error| CliError::usage(format!("invalid --owner: {error}")))?;
+    let config =
+        ProjectConfig::load(project).map_err(|error| CliError::project(error.to_string()))?;
+    if !config.modules.values().any(|module_id| *module_id == owner) {
+        return Err(CliError::project(
+            "--owner is not mapped by the project's nostos.toml",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_statement(
+    statement: &str,
+    read_only: bool,
+    index: usize,
+    statement_count: usize,
+) -> Result<(), CliError> {
+    let read_error = match prepare(statement) {
+        Ok(_) => return Ok(()),
+        Err(error) => error,
+    };
+    if prepare_write(statement).is_ok() {
+        if read_only {
+            let prefix = (statement_count > 1).then(|| format!("statement {}: ", index + 1));
             return Err(CliError::new(
-                EXIT_DATABASE,
-                "server returned an unexpected query response",
+                EXIT_QUERY,
+                format!(
+                    "{}read-only mode rejects mutating statements",
+                    prefix.unwrap_or_default()
+                ),
             ));
-        };
-        render_wire_statement(&statement, options.common.format, &mut io::stdout())?;
+        }
+        return Ok(());
+    }
+    let message = if statement_count == 1 {
+        read_error.to_string()
+    } else {
+        format!("statement {}: {read_error}", index + 1)
+    };
+    Err(CliError::new(EXIT_QUERY, message))
+}
+
+fn validate_batch_format(format: OutputFormat, statement_count: usize) -> Result<(), CliError> {
+    if format == OutputFormat::Csv && statement_count > 1 {
+        return Err(CliError::usage(
+            "--format csv supports one statement per invocation because result schemas may differ; use --format jsonl for multi-statement input",
+        ));
+    }
+    Ok(())
+}
+
+fn synchronize_for_query(options: &QueryOptions) -> Result<(), CliError> {
+    if let Some(project) = &options.common.project {
+        let report = synchronize(project, &options.common.database)?;
+        emit_project_diagnostics(&report.diagnostics);
     }
     Ok(())
 }
@@ -704,12 +839,16 @@ fn remote_repl(options: &QueryOptions, client: &mut Client) -> Result<(), CliErr
             buffer.clear();
         }
         for statement in statements {
+            if let Err(error) = validate_statement(&statement, options.read_only, 0, 1) {
+                writeln!(stderr, "error: {}", error.message).map_err(output_error)?;
+                continue;
+            }
             match remote_request(
                 client,
                 ClientRequest::Query {
                     query: statement,
                     parameters: Default::default(),
-                    read_only: false,
+                    read_only: options.read_only,
                     stream: false,
                     limits: None,
                 },
@@ -839,17 +978,37 @@ fn run_database(options: DatabaseOptions) -> Result<(), CliError> {
         }
         DatabaseCommand::Snapshot { name, output } => {
             export_snapshot(&mut client, &name, &output)?;
-            println!("snapshot: {}", output.display());
-            Ok(())
+            render_table_data(
+                &["database", "output", "state"],
+                &[vec![
+                    QueryValue::String(name),
+                    QueryValue::String(output.display().to_string()),
+                    QueryValue::String("snapshot_written".to_owned()),
+                ]],
+                options.format,
+                &mut io::stdout(),
+            )
         }
         DatabaseCommand::Restore { name, file } => {
             import_snapshot(&mut client, &name, &file)?;
-            println!("restored: {name}");
-            Ok(())
+            render_table_data(
+                &["database", "input", "state"],
+                &[vec![
+                    QueryValue::String(name),
+                    QueryValue::String(file.display().to_string()),
+                    QueryValue::String("restored".to_owned()),
+                ]],
+                options.format,
+                &mut io::stdout(),
+            )
         }
         DatabaseCommand::ExportLogical { name, output } => {
-            let response =
-                remote_request(&mut client, ClientRequest::LogicalExport { database: name })?;
+            let response = remote_request(
+                &mut client,
+                ClientRequest::LogicalExport {
+                    database: name.clone(),
+                },
+            )?;
             let ServerResponse::LogicalPackage { package } = response else {
                 return unexpected_database_response();
             };
@@ -857,8 +1016,16 @@ fn run_database(options: DatabaseOptions) -> Result<(), CliError> {
                 .map_err(|error| CliError::new(EXIT_IO, error.to_string()))?;
             bytes.push(b'\n');
             write_new_output(&output, &bytes)?;
-            println!("logical package: {}", output.display());
-            Ok(())
+            render_table_data(
+                &["database", "output", "state"],
+                &[vec![
+                    QueryValue::String(name),
+                    QueryValue::String(output.display().to_string()),
+                    QueryValue::String("logical_package_written".to_owned()),
+                ]],
+                options.format,
+                &mut io::stdout(),
+            )
         }
         DatabaseCommand::ImportLogical { name, file } => {
             let bytes = fs::read(&file).map_err(|error| {
@@ -876,8 +1043,16 @@ fn run_database(options: DatabaseOptions) -> Result<(), CliError> {
             let ServerResponse::LogicalImported { modules } = response else {
                 return unexpected_database_response();
             };
-            println!("imported {modules} module(s) into {name}");
-            Ok(())
+            render_table_data(
+                &["database", "modules", "state"],
+                &[vec![
+                    QueryValue::String(name),
+                    integer(modules)?,
+                    QueryValue::String("imported".to_owned()),
+                ]],
+                options.format,
+                &mut io::stdout(),
+            )
         }
     }
 }
@@ -887,6 +1062,7 @@ fn execute_one(
     database: &mut Option<EmbeddedDatabase>,
     statement: &str,
 ) -> Result<StatementResult, CliError> {
+    validate_statement(statement, options.read_only, 0, 1)?;
     let parameters = Parameters::new();
     if prepare(statement).is_ok() {
         return database
@@ -934,7 +1110,10 @@ fn execute_one(
                         expected_hash: Digest::of_bytes(&bytes),
                     },
                 )
-                .map(|report| StatementResult::Write(report.write))
+                .map(|report| {
+                    emit_project_diagnostics(&report.sync.diagnostics);
+                    StatementResult::Write(report.write)
+                })
                 .map_err(map_source_write);
             *database =
                 Some(EmbeddedDatabase::open(&options.common.database).map_err(CliError::database)?);
@@ -951,17 +1130,29 @@ fn execute_one(
 fn map_source_write(error: nostos_engine::SourceWriteError) -> CliError {
     use nostos_engine::SourceWriteError;
     let code = match &error {
-        SourceWriteError::Conflict { .. } => EXIT_CONFLICT,
+        SourceWriteError::Conflict { .. }
+        | SourceWriteError::ConfigChanged
+        | SourceWriteError::ProjectChanged(_) => EXIT_CONFLICT,
         SourceWriteError::Config(_) | SourceWriteError::Compile(_) => EXIT_PROJECT,
         SourceWriteError::Query(_) => EXIT_QUERY,
         SourceWriteError::Storage(_) | SourceWriteError::StaleDatabase => EXIT_DATABASE,
-        SourceWriteError::Io(_) | SourceWriteError::SyncAfterSourceChange(_) => EXIT_IO,
+        SourceWriteError::Io(_)
+        | SourceWriteError::SyncAfterSourceChange(_)
+        | SourceWriteError::DurabilityAfterSourceChange(_) => EXIT_IO,
         SourceWriteError::ReadOnlyModule(_)
         | SourceWriteError::UnknownOwner(_)
         | SourceWriteError::Unsupported(_)
         | SourceWriteError::Format(_) => EXIT_QUERY,
     };
-    CliError::new(code, error.to_string())
+    let message = match &error {
+        SourceWriteError::Compile(error) => compile_error_message(error),
+        SourceWriteError::SyncAfterSourceChange(error) => format!(
+            "source changed successfully but synchronization failed: {}",
+            sync_error_message(error)
+        ),
+        _ => error.to_string(),
+    };
+    CliError::new(code, message)
 }
 
 fn open_or_create(path: &Path) -> Result<EmbeddedDatabase, CliError> {
@@ -986,7 +1177,98 @@ fn open_or_create(path: &Path) -> Result<EmbeddedDatabase, CliError> {
 fn synchronize(project: &Path, database: &Path) -> Result<nostos_engine::SyncReport, CliError> {
     Synchronizer::default()
         .sync(project, database)
-        .map_err(|error| CliError::project(error.to_string()))
+        .map_err(|error| CliError::project(sync_error_message(&error)))
+}
+
+fn sync_error_message(error: &SyncError) -> String {
+    match error {
+        SyncError::Compile(error) => compile_error_message(error),
+        _ => error.to_string(),
+    }
+}
+
+fn compile_error_message(error: &CompileError) -> String {
+    match error {
+        CompileError::Diagnostics(diagnostics) => format!(
+            "project compilation failed with {} error diagnostic(s):\n{}",
+            diagnostics.len(),
+            format_project_diagnostics(diagnostics, None)
+        ),
+        _ => error.to_string(),
+    }
+}
+
+fn format_project_diagnostics(
+    diagnostics: &[ProjectDiagnostic],
+    module_override: Option<&Path>,
+) -> String {
+    diagnostics
+        .iter()
+        .map(|value| {
+            let module = module_override.map_or_else(
+                || {
+                    value
+                        .module
+                        .as_deref()
+                        .map_or_else(|| "<project>".to_owned(), |path| path.display().to_string())
+                },
+                |path| path.display().to_string(),
+            );
+            let range = value.diagnostic.primary().map_or_else(
+                || "bytes -".to_owned(),
+                |range| format!("bytes {}..{}", range.start(), range.end()),
+            );
+            format!(
+                "{module}:{range}: {} {}: {}",
+                value.diagnostic.code(),
+                value.diagnostic.severity(),
+                value.diagnostic.message()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn emit_project_diagnostics(diagnostics: &[ProjectDiagnostic]) {
+    if !diagnostics.is_empty() {
+        eprintln!("{}", format_project_diagnostics(diagnostics, None));
+    }
+}
+
+fn diagnose_source_for_format(
+    source: &[u8],
+    language_version: u32,
+) -> Option<Vec<ProjectDiagnostic>> {
+    let sequence = FORMAT_DIAGNOSTIC_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let directory = env::temp_dir().join(format!(
+        "nostos-format-diagnostics-{}-{sequence}",
+        std::process::id()
+    ));
+    if fs::create_dir(&directory).is_err() {
+        return None;
+    }
+    let config_path = directory.join("nostos.toml");
+    let source_path = directory.join("main.nostos");
+    let config = format!(
+        "config_version = 1\nlanguage_version = {language_version}\n\n[source]\nlayout = \"single\"\nentry = \"main.nostos\"\n\n[modules]\n\"main.nostos\" = \"00000000-0000-0000-0000-000000000001\"\n"
+    );
+    let setup = fs::write(&config_path, config).and_then(|()| fs::write(&source_path, source));
+    let result = if setup.is_ok() {
+        ProjectCompiler::new().compile(&directory)
+    } else {
+        let _ = fs::remove_file(&config_path);
+        let _ = fs::remove_file(&source_path);
+        let _ = fs::remove_dir(&directory);
+        return None;
+    };
+    let _ = fs::remove_file(&config_path);
+    let _ = fs::remove_file(&source_path);
+    let _ = fs::remove_dir(&directory);
+    match result {
+        Err(CompileError::Diagnostics(diagnostics)) => Some(diagnostics),
+        Ok(compiled) if !compiled.diagnostics.is_empty() => Some(compiled.diagnostics),
+        Ok(_) | Err(_) => None,
+    }
 }
 
 fn run_sync(options: CommonOptions) -> Result<(), CliError> {
@@ -994,6 +1276,7 @@ fn run_sync(options: CommonOptions) -> Result<(), CliError> {
         options.project.as_deref().expect("required by parser"),
         &options.database,
     )?;
+    emit_project_diagnostics(&report.diagnostics);
     let rows = vec![vec![
         QueryValue::String(report.semantic_hash.to_string()),
         QueryValue::Integer(i64::from(report.attempts)),
@@ -1021,8 +1304,17 @@ fn run_format(options: FormatOptions) -> Result<(), CliError> {
     } else {
         options.language_version.unwrap_or(1)
     };
-    let formatted = format_source(&source, language_version)
-        .map_err(|error| CliError::project(error.to_string()))?;
+    let formatted = format_source(&source, language_version).map_err(|error| {
+        let diagnostics = diagnose_source_for_format(&source, language_version);
+        let detail = diagnostics
+            .as_deref()
+            .filter(|values| !values.is_empty())
+            .map(|values| format_project_diagnostics(values, Some(options.file.as_path())));
+        CliError::project(match detail {
+            Some(detail) => format!("{error}\n{detail}"),
+            None => error.to_string(),
+        })
+    })?;
     if options.check {
         if source != formatted.as_bytes() {
             return Err(CliError::project(format!(
@@ -1199,24 +1491,10 @@ fn run_imports(options: ProjectOptions) -> Result<(), CliError> {
 fn run_warnings(options: ProjectOptions) -> Result<(), CliError> {
     let compiled = ProjectCompiler::new()
         .compile(&options.project)
-        .map_err(|error| CliError::project(error.to_string()))?;
-    let rows = compiled
-        .diagnostics
-        .into_iter()
-        .map(|diagnostic| {
-            vec![
-                QueryValue::String(
-                    diagnostic
-                        .module
-                        .map_or_else(|| "<project>".to_owned(), |path| path.display().to_string()),
-                ),
-                QueryValue::String(diagnostic.diagnostic.code().to_string()),
-                QueryValue::String(diagnostic.diagnostic.message().to_owned()),
-            ]
-        })
-        .collect::<Vec<_>>();
+        .map_err(|error| CliError::project(compile_error_message(&error)))?;
+    let rows = diagnostic_rows(compiled.diagnostics);
     render_table_data(
-        &["module", "code", "message"],
+        &["module", "range", "code", "severity", "message"],
         &rows,
         options.format,
         &mut io::stdout(),
@@ -1225,10 +1503,12 @@ fn run_warnings(options: ProjectOptions) -> Result<(), CliError> {
 
 fn run_doctor(options: CommonOptions) -> Result<(), CliError> {
     let project = options.project.as_deref().expect("required by parser");
+    let config =
+        ProjectConfig::load(project).map_err(|error| CliError::project(error.to_string()))?;
     let mut compiler = ProjectCompiler::new();
     let compiled = compiler
         .compile(project)
-        .map_err(|error| CliError::project(error.to_string()))?;
+        .map_err(|error| CliError::project(compile_error_message(&error)))?;
     let database = EmbeddedDatabase::open(&options.database).map_err(CliError::database)?;
     let status = database.check().map_err(CliError::database)?;
     if !status.is_valid() {
@@ -1237,16 +1517,70 @@ fn run_doctor(options: CommonOptions) -> Result<(), CliError> {
             "database integrity check failed",
         ));
     }
+    let manifest = database.sync_manifest().map_err(CliError::database)?;
+    let mut current_modules = compiled
+        .source_hashes
+        .iter()
+        .map(|(path, hash)| {
+            config
+                .modules
+                .get(path)
+                .copied()
+                .map(|module_id| (module_id, hash.as_bytes()))
+                .ok_or_else(|| {
+                    CliError::project(format!(
+                        "compiled module {} has no Stable Module ID mapping",
+                        path.display()
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    current_modules.sort_by_key(|(module_id, _)| *module_id);
+    let (synchronized, sync_status) =
+        manifest
+            .as_ref()
+            .map_or((false, "not_source_managed"), |manifest| {
+                let stored_modules = manifest
+                    .modules
+                    .iter()
+                    .map(|module| (module.module_id, module.content_hash))
+                    .collect::<Vec<_>>();
+                if manifest.semantic_hash == compiled.semantic_hash.as_bytes()
+                    && stored_modules == current_modules
+                {
+                    (true, "synchronized")
+                } else {
+                    (false, "source_drift")
+                }
+            });
     render_table_data(
-        &["project", "database", "warnings"],
+        &[
+            "project",
+            "database",
+            "synchronized",
+            "sync_status",
+            "warnings",
+        ],
         &[vec![
             QueryValue::String("ok".to_owned()),
             QueryValue::String("ok".to_owned()),
+            QueryValue::Boolean(synchronized),
+            QueryValue::String(sync_status.to_owned()),
             QueryValue::Integer(compiled.diagnostics.len() as i64),
         ]],
         options.format,
         &mut io::stdout(),
-    )
+    )?;
+    match sync_status {
+        "synchronized" => Ok(()),
+        "not_source_managed" => Err(CliError::new(
+            EXIT_DATABASE,
+            "database has no Source Mode synchronization manifest and does not belong to this project; run `nostos sync` with the intended database path",
+        )),
+        _ => Err(CliError::project(
+            "source files or project identity differ from the database synchronization manifest; run `nostos sync` before using this database",
+        )),
+    }
 }
 
 fn repl(options: QueryOptions, database: &mut Option<EmbeddedDatabase>) -> Result<(), CliError> {
@@ -1281,15 +1615,20 @@ fn repl(options: QueryOptions, database: &mut Option<EmbeddedDatabase>) -> Resul
         }
         let trimmed = line.trim();
         if buffer.is_empty() && trimmed.starts_with(':') {
-            if handle_admin(
+            match handle_admin(
                 trimmed,
                 &options,
                 database,
                 &mut transaction,
                 &mut stdout,
                 &mut stderr,
-            )? {
-                break;
+            ) {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(error) if error.code == EXIT_USAGE => {
+                    writeln!(stderr, "error: {}", error.message).map_err(output_error)?;
+                }
+                Err(error) => return Err(error),
             }
             continue;
         }
@@ -1301,8 +1640,15 @@ fn repl(options: QueryOptions, database: &mut Option<EmbeddedDatabase>) -> Resul
         }
         for statement in statements {
             if let Some(pending) = &mut transaction {
-                pending.push((statement, Parameters::new()));
-                writeln!(stderr, "queued").map_err(output_error)?;
+                match validate_statement(&statement, options.read_only, 0, 1) {
+                    Ok(()) => {
+                        pending.push((statement, Parameters::new()));
+                        writeln!(stderr, "queued").map_err(output_error)?;
+                    }
+                    Err(error) => {
+                        writeln!(stderr, "error: {}", error.message).map_err(output_error)?;
+                    }
+                }
             } else {
                 match execute_one(&options, database, &statement) {
                     Ok(result) => render_statement(&result, options.common.format, &mut stdout)?,
@@ -1360,7 +1706,15 @@ fn handle_admin(
             *database = Some(
                 EmbeddedDatabase::open(&options.common.database).map_err(CliError::database)?,
             );
-            synchronization?;
+            let report = synchronization?;
+            if !report.diagnostics.is_empty() {
+                writeln!(
+                    stderr,
+                    "{}",
+                    format_project_diagnostics(&report.diagnostics, None)
+                )
+                .map_err(output_error)?;
+            }
             writeln!(stderr, "synchronized").map_err(output_error)?;
         }
         ":schema" => {
@@ -1480,28 +1834,37 @@ fn render_project_admin(
     let mut compiler = ProjectCompiler::new();
     let compiled = compiler
         .compile(project)
-        .map_err(|error| CliError::project(error.to_string()))?;
-    let rows = compiled
-        .diagnostics
-        .into_iter()
-        .map(|diagnostic| {
-            vec![
-                QueryValue::String(
-                    diagnostic
-                        .module
-                        .map_or_else(|| "<project>".to_owned(), |path| path.display().to_string()),
-                ),
-                QueryValue::String(diagnostic.diagnostic.code().to_string()),
-                QueryValue::String(diagnostic.diagnostic.message().to_owned()),
-            ]
-        })
-        .collect::<Vec<_>>();
+        .map_err(|error| CliError::project(compile_error_message(&error)))?;
+    let rows = diagnostic_rows(compiled.diagnostics);
     render_table_data(
-        &["module", "code", "message"],
+        &["module", "range", "code", "severity", "message"],
         &rows,
         options.common.format,
         output,
     )
+}
+
+fn diagnostic_rows(diagnostics: Vec<ProjectDiagnostic>) -> Vec<Vec<QueryValue>> {
+    diagnostics
+        .into_iter()
+        .map(|value| {
+            let range = value.diagnostic.primary().map_or_else(
+                || "-".to_owned(),
+                |range| format!("{}..{}", range.start(), range.end()),
+            );
+            vec![
+                QueryValue::String(
+                    value
+                        .module
+                        .map_or_else(|| "<project>".to_owned(), |path| path.display().to_string()),
+                ),
+                QueryValue::String(range),
+                QueryValue::String(value.diagnostic.code().to_string()),
+                QueryValue::String(value.diagnostic.severity().to_string()),
+                QueryValue::String(value.diagnostic.message().to_owned()),
+            ]
+        })
+        .collect()
 }
 
 fn connect_remote(options: &RemoteOptions) -> Result<Client, CliError> {
@@ -1823,6 +2186,30 @@ fn render_wire_statement(
     }
 }
 
+fn render_wire_statement_batch(
+    statements: &[serde_json::Value],
+    format: OutputFormat,
+    output: &mut impl Write,
+) -> Result<(), CliError> {
+    if format == OutputFormat::Json && statements.len() > 1 {
+        write!(output, "[").map_err(output_error)?;
+        for (index, statement) in statements.iter().enumerate() {
+            if index > 0 {
+                write!(output, ",").map_err(output_error)?;
+            }
+            let mut item = Vec::new();
+            render_wire_statement(statement, OutputFormat::Json, &mut item)?;
+            trim_line_ending(&mut item);
+            output.write_all(&item).map_err(output_error)?;
+        }
+        return writeln!(output, "]").map_err(output_error);
+    }
+    for statement in statements {
+        render_wire_statement(statement, format, output)?;
+    }
+    Ok(())
+}
+
 fn render_wire_query(
     result: &serde_json::Value,
     format: OutputFormat,
@@ -1891,6 +2278,36 @@ fn render_statement(
     match result {
         StatementResult::Read(result) => render_query(result, format, output),
         StatementResult::Write(result) => render_write(result, format, output),
+    }
+}
+
+fn render_statement_batch(
+    results: &[StatementResult],
+    format: OutputFormat,
+    output: &mut impl Write,
+) -> Result<(), CliError> {
+    if format == OutputFormat::Json && results.len() > 1 {
+        write!(output, "[").map_err(output_error)?;
+        for (index, result) in results.iter().enumerate() {
+            if index > 0 {
+                write!(output, ",").map_err(output_error)?;
+            }
+            let mut item = Vec::new();
+            render_statement(result, OutputFormat::Json, &mut item)?;
+            trim_line_ending(&mut item);
+            output.write_all(&item).map_err(output_error)?;
+        }
+        return writeln!(output, "]").map_err(output_error);
+    }
+    for result in results {
+        render_statement(result, format, output)?;
+    }
+    Ok(())
+}
+
+fn trim_line_ending(bytes: &mut Vec<u8>) {
+    while matches!(bytes.last(), Some(b'\n' | b'\r')) {
+        bytes.pop();
     }
 }
 
@@ -2123,10 +2540,18 @@ fn write_json_value(output: &mut impl Write, value: &QueryValue) -> Result<(), C
             write!(output, "}}").map_err(output_error)
         }
         QueryValue::Edge(edge) => {
+            write!(output, "{{\"id\":{},\"kind\":", edge.id.get()).map_err(output_error)?;
+            write_json_string(
+                output,
+                match edge.kind {
+                    EdgeKind::Directed => "directed",
+                    EdgeKind::Undirected => "directionless",
+                    EdgeKind::Bidirectional => "bidirectional",
+                },
+            )?;
             write!(
                 output,
-                "{{\"id\":{},\"source\":{},\"target\":{},\"type\":",
-                edge.id.get(),
+                ",\"source\":{},\"target\":{},\"type\":",
                 edge.source.get(),
                 edge.target.get()
             )
@@ -2299,8 +2724,10 @@ mod tests {
             "knowledge".to_owned(),
             "--credential-file".to_owned(),
             "client.token".to_owned(),
+            "--read-only".to_owned(),
         ])
         .expect("remote query parses");
+        assert!(query.read_only);
         assert_eq!(
             query.remote.expect("remote options exist").server,
             "nostos://127.0.0.1:7878"

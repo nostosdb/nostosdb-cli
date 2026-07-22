@@ -95,6 +95,179 @@ fn one_shot_pipe_and_file_share_machine_readable_semantics() {
 }
 
 #[test]
+fn invalid_inputs_and_owner_usage_do_not_create_a_database() {
+    let directory = temp_dir("preflight");
+
+    let owner_database = directory.join("owner.ndb");
+    let owner = command()
+        .args([
+            "query",
+            "CREATE (n {name: 'should-not-exist'})",
+            "--database",
+            owner_database.to_str().expect("UTF-8 path"),
+            "--owner",
+            "11111111-1111-1111-1111-111111111111",
+        ])
+        .output()
+        .expect("invalid owner invocation runs");
+    assert_eq!(owner.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&owner.stderr).contains("--owner requires --project"));
+    assert!(!owner_database.exists());
+
+    let read_only_database = directory.join("read-only.ndb");
+    let read_only = command()
+        .args([
+            "query",
+            "CREATE (n {name: 'should-not-exist'})",
+            "--database",
+            read_only_database.to_str().expect("UTF-8 path"),
+            "--read-only",
+        ])
+        .output()
+        .expect("read-only mutation invocation runs");
+    assert_eq!(read_only.status.code(), Some(4));
+    assert!(read_only.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&read_only.stderr)
+            .contains("read-only mode rejects mutating statements")
+    );
+    assert!(!read_only_database.exists());
+
+    let source_project = directory.join("source-project");
+    fs::create_dir(&source_project).expect("source project creates");
+    fs::write(
+        source_project.join("nostos.toml"),
+        "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostos\"\n\n[modules]\n\"main.nostos\" = \"11111111-1111-1111-1111-111111111111\"\n",
+    )
+    .expect("source configuration writes");
+    fs::write(source_project.join("main.nostos"), "node existing {}\n").expect("source writes");
+    let source_database = source_project.join("graph.ndb");
+    let missing_owner = command()
+        .args([
+            "query",
+            "CREATE (n {name: 'should-not-exist'})",
+            "--project",
+            source_project.to_str().expect("UTF-8 path"),
+            "--database",
+            source_database.to_str().expect("UTF-8 path"),
+        ])
+        .output()
+        .expect("Source Mode missing-owner invocation runs");
+    assert_eq!(missing_owner.status.code(), Some(2));
+    assert!(
+        !source_database.exists(),
+        "owner validation must precede sync"
+    );
+
+    let source_read_only = command()
+        .args([
+            "query",
+            "CREATE (n {name: 'should-not-exist'})",
+            "--project",
+            source_project.to_str().expect("UTF-8 path"),
+            "--database",
+            source_database.to_str().expect("UTF-8 path"),
+            "--owner",
+            "11111111-1111-1111-1111-111111111111",
+            "--read-only",
+        ])
+        .output()
+        .expect("Source Mode read-only mutation invocation runs");
+    assert_eq!(source_read_only.status.code(), Some(4));
+    assert!(
+        !source_database.exists(),
+        "query rejection must precede sync"
+    );
+
+    let missing_database = directory.join("missing.ndb");
+    let missing = command()
+        .args([
+            "query",
+            "--file",
+            directory
+                .join("missing.cypher")
+                .to_str()
+                .expect("UTF-8 path"),
+            "--database",
+            missing_database.to_str().expect("UTF-8 path"),
+        ])
+        .output()
+        .expect("missing file invocation runs");
+    assert_eq!(missing.status.code(), Some(7));
+    assert!(!missing_database.exists());
+
+    let invalid_database = directory.join("invalid.ndb");
+    let mut child = command()
+        .args([
+            "query",
+            "--database",
+            invalid_database.to_str().expect("UTF-8 path"),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("invalid stdin process starts");
+    child
+        .stdin
+        .take()
+        .expect("stdin exists")
+        .write_all(b"NOT CYPHER\n")
+        .expect("invalid query writes");
+    let invalid = child.wait_with_output().expect("invalid stdin exits");
+    assert_eq!(invalid.status.code(), Some(4));
+    assert!(!invalid_database.exists());
+
+    fs::remove_dir_all(directory).expect("temporary directory removes");
+}
+
+#[test]
+fn multi_statement_machine_output_is_framed_or_rejected_before_open() {
+    let directory = temp_dir("multi-output");
+    let database = directory.join("graph.ndb");
+    let json = command()
+        .args([
+            "query",
+            "RETURN 1 AS first; RETURN 2 AS second;",
+            "--database",
+            database.to_str().expect("UTF-8 path"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("multi-statement JSON runs");
+    assert!(
+        json.status.success(),
+        "{}",
+        String::from_utf8_lossy(&json.stderr)
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&json.stdout).expect("stdout is one JSON document");
+    assert_eq!(document.as_array().expect("batch is an array").len(), 2);
+    assert_eq!(document[0]["columns"], serde_json::json!(["first"]));
+    assert_eq!(document[1]["rows"], serde_json::json!([[2]]));
+
+    let csv_database = directory.join("csv.ndb");
+    let csv = command()
+        .args([
+            "query",
+            "RETURN 1 AS first; RETURN 2 AS second;",
+            "--database",
+            csv_database.to_str().expect("UTF-8 path"),
+            "--format",
+            "csv",
+        ])
+        .output()
+        .expect("multi-statement CSV validation runs");
+    assert_eq!(csv.status.code(), Some(2));
+    assert!(csv.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&csv.stderr).contains("use --format jsonl"));
+    assert!(!csv_database.exists());
+
+    fs::remove_dir_all(directory).expect("temporary directory removes");
+}
+
+#[test]
 fn repl_supports_multiline_and_atomic_transactions_without_stdout_prompts() {
     let directory = temp_dir("repl");
     let database = directory.join("graph.ndb");
@@ -150,6 +323,41 @@ fn repl_supports_multiline_and_atomic_transactions_without_stdout_prompts() {
 }
 
 #[test]
+fn repl_continues_after_recoverable_meta_command_errors() {
+    let directory = temp_dir("repl-recovery");
+    let database = directory.join("graph.ndb");
+    let mut child = command()
+        .args([
+            "query",
+            "--database",
+            database.to_str().expect("UTF-8 path"),
+            "--format",
+            "jsonl",
+            "--interactive",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("REPL starts");
+    child
+        .stdin
+        .take()
+        .expect("stdin exists")
+        .write_all(b":bogus\nRETURN 1 AS after;\n:quit\n")
+        .expect("REPL script writes");
+    let output = child.wait_with_output().expect("REPL exits");
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("UTF-8 output"),
+        "{\"after\":1}\n"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown REPL command"));
+
+    fs::remove_dir_all(directory).expect("temporary directory removes");
+}
+
+#[test]
 fn stable_exit_codes_distinguish_usage_and_query_errors() {
     let usage = command()
         .arg("unknown")
@@ -173,6 +381,61 @@ fn stable_exit_codes_distinguish_usage_and_query_errors() {
     assert!(String::from_utf8_lossy(&query.stderr).starts_with("nostos: "));
 
     fs::remove_dir_all(directory).expect("temporary directory removes");
+}
+
+#[test]
+fn every_subcommand_has_real_help_with_accurate_formats() {
+    for subcommand in [
+        "query",
+        "server",
+        "database",
+        "sync",
+        "format",
+        "check",
+        "doctor",
+        "inspect",
+        "stats",
+        "schema",
+        "unresolved",
+        "imports",
+        "warnings",
+    ] {
+        let output = command()
+            .args([subcommand, "--help"])
+            .output()
+            .expect("subcommand help runs");
+        assert!(
+            output.status.success(),
+            "{subcommand}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty(), "{subcommand}");
+        assert!(
+            String::from_utf8_lossy(&output.stdout)
+                .starts_with(&format!("Usage: nostos {subcommand}")),
+            "{subcommand}"
+        );
+    }
+
+    for subcommand in [
+        "query",
+        "database",
+        "sync",
+        "check",
+        "doctor",
+        "inspect",
+        "stats",
+        "schema",
+        "unresolved",
+        "imports",
+        "warnings",
+    ] {
+        let output = command()
+            .args([subcommand, "--help"])
+            .output()
+            .expect("format-aware help runs");
+        assert!(String::from_utf8_lossy(&output.stdout).contains("table|json|jsonl|csv"));
+    }
 }
 
 #[test]
@@ -219,6 +482,278 @@ fn format_outputs_canonical_source_without_mutating_the_file() {
             .expect("canonical check runs")
             .success()
     );
+
+    fs::remove_dir_all(directory).expect("temporary directory removes");
+}
+
+#[test]
+fn source_failures_report_file_range_code_severity_and_message() {
+    const OWNER: &str = "11111111-1111-1111-1111-111111111111";
+    let directory = temp_dir("diagnostics");
+    let source = directory.join("main.nostos");
+    let database = directory.join("graph.ndb");
+    fs::write(
+        directory.join("nostos.toml"),
+        format!(
+            "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostos\"\n\n[modules]\n\"main.nostos\" = \"{OWNER}\"\n"
+        ),
+    )
+    .expect("configuration writes");
+    fs::write(&source, "node broken {\n  name: \"unterminated\n}\n")
+        .expect("invalid source writes");
+
+    let sync = command()
+        .args([
+            "sync",
+            "--project",
+            directory.to_str().expect("UTF-8 path"),
+            "--database",
+            database.to_str().expect("UTF-8 path"),
+        ])
+        .output()
+        .expect("invalid sync runs");
+    assert_eq!(sync.status.code(), Some(3));
+    assert!(sync.stdout.is_empty());
+    let sync_error = String::from_utf8(sync.stderr).expect("UTF-8 diagnostics");
+    for expected in [
+        "main.nostos:bytes ",
+        "NOSTOS-L004",
+        "error:",
+        "closing delimiter",
+    ] {
+        assert!(
+            sync_error.contains(expected),
+            "missing {expected:?}: {sync_error}"
+        );
+    }
+    assert!(!database.exists());
+
+    let format = command()
+        .args(["format", "--file", source.to_str().expect("UTF-8 path")])
+        .output()
+        .expect("invalid format runs");
+    assert_eq!(format.status.code(), Some(3));
+    assert!(format.stdout.is_empty());
+    let format_error = String::from_utf8(format.stderr).expect("UTF-8 diagnostics");
+    for expected in [
+        source.to_str().expect("UTF-8 path"),
+        ":bytes ",
+        "NOSTOS-L004",
+        "error:",
+        "closing delimiter",
+    ] {
+        assert!(
+            format_error.contains(expected),
+            "missing {expected:?}: {format_error}"
+        );
+    }
+
+    fs::remove_dir_all(directory).expect("temporary directory removes");
+}
+
+#[test]
+fn automatic_source_sync_reports_warnings_only_on_stderr() {
+    const MAIN: &str = "11111111-1111-1111-1111-111111111111";
+    const PEOPLE: &str = "22222222-2222-2222-2222-222222222222";
+    let directory = temp_dir("sync-warnings");
+    let database = directory.join("graph.ndb");
+    fs::write(
+        directory.join("nostos.toml"),
+        format!(
+            "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostos\"\n\n[modules]\n\"main.nostos\" = \"{MAIN}\"\n\"people.nostos\" = \"{PEOPLE}\"\n"
+        ),
+    )
+    .expect("configuration writes");
+    fs::write(
+        directory.join("main.nostos"),
+        "import \"./people.nostos\" as people\nnode alice {}\nedge alice -> people.bob {}\n",
+    )
+    .expect("source writes");
+
+    let query = command()
+        .args([
+            "query",
+            "RETURN 1 AS value",
+            "--project",
+            directory.to_str().expect("UTF-8 path"),
+            "--database",
+            database.to_str().expect("UTF-8 path"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("auto-sync query runs");
+    assert!(
+        query.status.success(),
+        "{}",
+        String::from_utf8_lossy(&query.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&query.stdout).expect("stdout is JSON"),
+        serde_json::json!({"columns": ["value"], "rows": [[1]]})
+    );
+    let warnings = String::from_utf8(query.stderr).expect("UTF-8 diagnostics");
+    assert!(warnings.contains("main.nostos:bytes "));
+    assert!(warnings.contains("NOSTOS-R005 warning:"));
+    assert!(warnings.contains("NOSTOS-R006 warning:"));
+
+    fs::remove_dir_all(directory).expect("temporary directory removes");
+}
+
+#[test]
+fn edge_json_includes_stable_direction_kind_vocabulary() {
+    const OWNER: &str = "11111111-1111-1111-1111-111111111111";
+    let directory = temp_dir("edge-kind");
+    let database = directory.join("graph.ndb");
+    fs::write(
+        directory.join("nostos.toml"),
+        format!(
+            "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostos\"\n\n[modules]\n\"main.nostos\" = \"{OWNER}\"\n"
+        ),
+    )
+    .expect("configuration writes");
+    fs::write(
+        directory.join("main.nostos"),
+        "schema DIRECTED {}\nschema DIRECTIONLESS {}\nschema BIDIRECTIONAL {}\n\nnode a {}\nnode b {}\n\nedge a -> b: DIRECTED {}\nedge a - b: DIRECTIONLESS {}\nedge a <-> b: BIDIRECTIONAL {}\n",
+    )
+    .expect("source writes");
+    let sync = command()
+        .args([
+            "sync",
+            "--project",
+            directory.to_str().expect("UTF-8 path"),
+            "--database",
+            database.to_str().expect("UTF-8 path"),
+        ])
+        .output()
+        .expect("sync runs");
+    assert!(
+        sync.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+
+    let output = command()
+        .args([
+            "query",
+            "MATCH (a)-[r]-(b) RETURN r",
+            "--database",
+            database.to_str().expect("UTF-8 path"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("edge query runs");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("edge output is JSON");
+    let kinds = document["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .filter_map(|row| row.get(0))
+        .filter_map(|edge| edge.get("kind"))
+        .filter_map(serde_json::Value::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        kinds,
+        ["bidirectional", "directed", "directionless"]
+            .into_iter()
+            .collect()
+    );
+
+    fs::remove_dir_all(directory).expect("temporary directory removes");
+}
+
+#[test]
+fn doctor_rejects_source_drift_and_unrelated_databases() {
+    const OWNER: &str = "11111111-1111-1111-1111-111111111111";
+    let directory = temp_dir("doctor-drift");
+    let database = directory.join("graph.ndb");
+    fs::write(
+        directory.join("nostos.toml"),
+        format!(
+            "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostos\"\n\n[modules]\n\"main.nostos\" = \"{OWNER}\"\n"
+        ),
+    )
+    .expect("configuration writes");
+    fs::write(
+        directory.join("main.nostos"),
+        "node alice {\n  name: \"Alice\"\n  age: 30\n}\n",
+    )
+    .expect("source writes");
+    let sync = command()
+        .args([
+            "sync",
+            "--project",
+            directory.to_str().expect("UTF-8 path"),
+            "--database",
+            database.to_str().expect("UTF-8 path"),
+        ])
+        .output()
+        .expect("sync runs");
+    assert!(
+        sync.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+
+    fs::write(
+        directory.join("main.nostos"),
+        "node alice {\n  name: \"Alice\"\n  age: 31\n}\n",
+    )
+    .expect("source changes without synchronization");
+    let drift = command()
+        .args([
+            "doctor",
+            "--project",
+            directory.to_str().expect("UTF-8 path"),
+            "--database",
+            database.to_str().expect("UTF-8 path"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("drift doctor runs");
+    assert_eq!(drift.status.code(), Some(3));
+    let drift_status: serde_json::Value =
+        serde_json::from_slice(&drift.stdout).expect("drift status remains machine-readable");
+    assert_eq!(drift_status["rows"][0][2], false);
+    assert_eq!(drift_status["rows"][0][3], "source_drift");
+    assert!(String::from_utf8_lossy(&drift.stderr).contains("run `nostos sync`"));
+
+    let unrelated = directory.join("unrelated.ndb");
+    let create = command()
+        .args([
+            "query",
+            "RETURN 1",
+            "--database",
+            unrelated.to_str().expect("UTF-8 path"),
+        ])
+        .output()
+        .expect("unrelated database creates");
+    assert!(create.status.success());
+    let unrelated_status = command()
+        .args([
+            "doctor",
+            "--project",
+            directory.to_str().expect("UTF-8 path"),
+            "--database",
+            unrelated.to_str().expect("UTF-8 path"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("unrelated doctor runs");
+    assert_eq!(unrelated_status.status.code(), Some(5));
+    let status: serde_json::Value = serde_json::from_slice(&unrelated_status.stdout)
+        .expect("unrelated status remains machine-readable");
+    assert_eq!(status["rows"][0][2], false);
+    assert_eq!(status["rows"][0][3], "not_source_managed");
 
     fs::remove_dir_all(directory).expect("temporary directory removes");
 }

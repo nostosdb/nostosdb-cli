@@ -55,6 +55,26 @@ def diagnostic(command, *, env=None):
     }
 
 
+def channel_diagnostic_environments(
+    direct: Path,
+    npm_global: Path,
+    npx_environment,
+    homebrew: Path = None,
+):
+    """Authorize the exact binary exercised by each installed-provider fixture."""
+
+    environments = {"npx": npx_environment}
+    for name, binary in {"direct": direct, "npm_global": npm_global}.items():
+        environment = os.environ.copy()
+        environment["NOSTOS_BIN"] = str(binary)
+        environments[name] = environment
+    if homebrew is not None:
+        environment = os.environ.copy()
+        environment["NOSTOS_BIN"] = str(homebrew)
+        environments["homebrew"] = environment
+    return environments
+
+
 def extract(archive: Path, destination: Path) -> Path:
     destination.mkdir(parents=True, exist_ok=False)
 
@@ -308,7 +328,12 @@ def main() -> int:
                     root / "fixture-homebrew",
                     binary=args.homebrew_binary.resolve(),
                 )
-            diagnostic_environments = {"npx": npx_environment}
+            diagnostic_environments = channel_diagnostic_environments(
+                direct,
+                global_binary,
+                npx_environment,
+                args.homebrew_binary.resolve() if args.homebrew_binary else None,
+            )
             diagnostics = {
                 name: fixture_diagnostic(
                     root / "fixture-{}".format(name.replace("_", "-")),
@@ -332,8 +357,18 @@ def main() -> int:
                 raise CandidateError("invalid-query diagnostic unexpectedly succeeded")
             if different_diagnostics:
                 raise CandidateError(
-                    "channel diagnostic mismatch: {}".format(
-                        ", ".join(different_diagnostics)
+                    "channel diagnostic mismatch: {}; observed={}".format(
+                        ", ".join(different_diagnostics),
+                        json.dumps(
+                            {
+                                "direct": diagnostic_baseline,
+                                **{
+                                    name: diagnostics[name]
+                                    for name in different_diagnostics
+                                },
+                            },
+                            sort_keys=True,
+                        ),
                     )
                 )
             print(
