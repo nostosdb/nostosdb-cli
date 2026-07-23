@@ -9,13 +9,13 @@ Typical target-native sequence:
 ```bash
 python3 distribution/scripts/generate_metadata.py --output dist/metadata
 python3 distribution/scripts/smoke_candidate.py \
-  --target TARGET --binary target/TARGET/release/nostos --output dist/native.json
+  --target TARGET --binary target/TARGET/release/nostdb --output dist/native.json
 python3 distribution/scripts/assemble_candidate.py \
-  --target TARGET --binary target/TARGET/release/nostos \
+  --target TARGET --binary target/TARGET/release/nostdb \
   --native-evidence dist/native.json --metadata dist/metadata --output dist
 python3 distribution/scripts/verify_candidate.py --archive dist/ARCHIVE
 python3 distribution/scripts/stage_npm_candidate.py \
-  --target TARGET --binary target/TARGET/release/nostos --output dist/npm
+  --target TARGET --binary target/TARGET/release/nostdb --output dist/npm
 ```
 
 Release-formula rendering requires both verified macOS archives. For local native

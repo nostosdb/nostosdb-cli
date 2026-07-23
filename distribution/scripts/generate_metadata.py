@@ -40,14 +40,14 @@ def main() -> int:
         document = {
             "SPDXID": "SPDXRef-DOCUMENT",
             "creationInfo": {
-                "creators": ["Tool: nostos-distribution-metadata-1"],
+                "creators": ["Tool: nostdb-distribution-metadata-1"],
                 "created": "1970-01-01T00:00:00Z",
             },
             "dataLicense": "CC0-1.0",
             "documentNamespace": (
-                "https://github.com/nostosdb/nostosdb-cli/sbom/{}".format(version)
+                "https://github.com/nostdb/nostdb-cli/sbom/{}".format(version)
             ),
-            "name": "nostos-cli-{}".format(version),
+            "name": "nostdb-cli-{}".format(version),
             "packages": [
                 {
                     "SPDXID": "SPDXRef-Package-{}".format(index),
@@ -93,7 +93,7 @@ def main() -> int:
         )
         return 0
     except (CandidateError, OSError, ValueError) as error:
-        print("nostos-metadata: {}".format(error), file=sys.stderr)
+        print("nostdb-metadata: {}".format(error), file=sys.stderr)
         return 1
 
 

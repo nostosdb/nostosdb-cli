@@ -31,7 +31,7 @@ function runHelper(source, environment = {}) {
 }
 
 test("forwards exact arguments, stdout, stderr, and exit status", async (context) => {
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nostos-launcher-test-"));
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nostdb-launcher-test-"));
   context.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
   const childScript = path.join(temporary, "child.cjs");
   fs.writeFileSync(
@@ -55,7 +55,7 @@ test(
   "forwards SIGTERM to the native CLI",
   { skip: process.platform === "win32" },
   async (context) => {
-    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nostos-signal-test-"));
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nostdb-signal-test-"));
     context.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
     const signalFile = path.join(temporary, "signal.txt");
     const childScript = path.join(temporary, "signal-child.cjs");

@@ -6,12 +6,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const PLATFORM_PACKAGES = Object.freeze({
-  "darwin-arm64": "@nostosdb/cli-darwin-arm64",
-  "darwin-x64": "@nostosdb/cli-darwin-x64",
-  "linux-arm64-gnu": "@nostosdb/cli-linux-arm64-gnu",
-  "linux-x64-gnu": "@nostosdb/cli-linux-x64-gnu",
-  "win32-arm64": "@nostosdb/cli-win32-arm64",
-  "win32-x64": "@nostosdb/cli-win32-x64",
+  "darwin-arm64": "@nostdb/cli-darwin-arm64",
+  "darwin-x64": "@nostdb/cli-darwin-x64",
+  "linux-arm64-gnu": "@nostdb/cli-linux-arm64-gnu",
+  "linux-x64-gnu": "@nostdb/cli-linux-x64-gnu",
+  "win32-arm64": "@nostdb/cli-win32-arm64",
+  "win32-x64": "@nostdb/cli-win32-x64",
 });
 
 class PlatformError extends Error {}
@@ -33,7 +33,7 @@ function packageFor(platform, arch, report = process.report) {
   const key = `${platform}-${arch}${suffix}`;
   const packageName = PLATFORM_PACKAGES[key];
   if (!packageName) {
-    throw new PlatformError(`unsupported NostosDB platform: ${platform}-${arch}`);
+    throw new PlatformError(`unsupported NostDB platform: ${platform}-${arch}`);
   }
   return packageName;
 }
@@ -51,7 +51,7 @@ function resolveBinary({
     manifestPath = resolvePackage(`${packageName}/package.json`);
   } catch (error) {
     throw new PlatformError(
-      `missing optional package ${packageName}@${version}; reinstall @nostosdb/cli@${version}`,
+      `missing optional package ${packageName}@${version}; reinstall @nostdb/cli@${version}`,
       { cause: error },
     );
   }
@@ -62,7 +62,7 @@ function resolveBinary({
         `found ${manifest.name}@${manifest.version}`,
     );
   }
-  const executable = platform === "win32" ? "nostos.exe" : "nostos";
+  const executable = platform === "win32" ? "nostdb.exe" : "nostdb";
   const binary = path.join(path.dirname(manifestPath), "bin", executable);
   let details;
   try {

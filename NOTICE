@@ -1,10 +1,13 @@
-nostosdb-cli
+nostdb-cli
+
+Copyright 2026 Jongho Yoo.
 
 Licensed under the Server Side Public License, Version 1 (SSPL-1.0).
-No final copyright holder or contribution entity has been legally approved.
-External contributions and distribution releases remain closed.
+Jongho Yoo, an individual in the United States, is the copyright holder for the
+original project material. External contributions are not accepted, and
+distribution releases remain closed pending legal review.
 
-The CLI links the sibling nostos-engine and therefore includes the Core's
+The CLI links the sibling nostdb-engine and therefore includes the Core's
 permissively licensed Rust dependencies and bundled public-domain SQLite.
 Exact per-package license texts/SBOM and final attribution packaging remain
 legal release blockers.

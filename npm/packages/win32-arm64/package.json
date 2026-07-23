@@ -1,10 +1,10 @@
 {
-  "name": "@nostosdb/cli-win32-arm64",
+  "name": "@nostdb/cli-win32-arm64",
   "version": "0.0.1",
-  "description": "NostosDB CLI for Windows ARM64",
+  "description": "NostDB CLI for Windows ARM64",
   "license": "SSPL-1.0",
   "os": ["win32"],
   "cpu": ["arm64"],
-  "files": ["bin/nostos.exe", "LICENSE", "NOTICE", "README.md"],
+  "files": ["bin/nostdb.exe", "LICENSE", "NOTICE", "README.md"],
   "publishConfig": {"access": "public"}
 }

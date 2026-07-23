@@ -54,7 +54,7 @@ def main() -> int:
             raise CandidateError("candidate binary does not exist: {}".format(binary))
         version = checked([binary, "--version"])
         help_result = checked([binary, "--help"])
-        expected = "nostos {}\n".format(manifest["version"])
+        expected = "nostdb {}\n".format(manifest["version"])
         passed = (
             version["returncode"] == 0
             and version["stdout"] == expected
@@ -77,7 +77,7 @@ def main() -> int:
         print(args.output.resolve())
         return 0
     except (CandidateError, OSError, subprocess.TimeoutExpired) as error:
-        print("nostos-smoke: {}".format(error), file=sys.stderr)
+        print("nostdb-smoke: {}".format(error), file=sys.stderr)
         return 1
 
 

@@ -8,7 +8,7 @@ static SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 fn temp_dir(name: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
-        "nostos-cli-{name}-{}-{}",
+        "nostdb-cli-{name}-{}-{}",
         std::process::id(),
         SEQUENCE.fetch_add(1, Ordering::Relaxed)
     ));
@@ -17,7 +17,7 @@ fn temp_dir(name: &str) -> PathBuf {
 }
 
 fn command() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_nostos"))
+    Command::new(env!("CARGO_BIN_EXE_nostdb"))
 }
 
 #[test]
@@ -136,11 +136,11 @@ fn invalid_inputs_and_owner_usage_do_not_create_a_database() {
     let source_project = directory.join("source-project");
     fs::create_dir(&source_project).expect("source project creates");
     fs::write(
-        source_project.join("nostos.toml"),
-        "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostos\"\n\n[modules]\n\"main.nostos\" = \"11111111-1111-1111-1111-111111111111\"\n",
+        source_project.join("nostdb.toml"),
+        "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostdb\"\n\n[modules]\n\"main.nostdb\" = \"11111111-1111-1111-1111-111111111111\"\n",
     )
     .expect("source configuration writes");
-    fs::write(source_project.join("main.nostos"), "node existing {}\n").expect("source writes");
+    fs::write(source_project.join("main.nostdb"), "node existing {}\n").expect("source writes");
     let source_database = source_project.join("graph.ndb");
     let missing_owner = command()
         .args([
@@ -298,9 +298,9 @@ fn repl_supports_multiline_and_atomic_transactions_without_stdout_prompts() {
     let stdout = String::from_utf8(output.stdout).expect("UTF-8 output");
     assert!(stdout.contains("{\"nodes_created\":1"));
     assert!(stdout.contains("{\"name\":\"Alice\"}"));
-    assert!(!stdout.contains("nostos>"));
+    assert!(!stdout.contains("nostdb>"));
     let stderr = String::from_utf8(output.stderr).expect("UTF-8 diagnostics");
-    assert!(stderr.contains("nostos>"));
+    assert!(stderr.contains("nostdb>"));
     assert!(stderr.contains("committed"));
 
     let output = command()
@@ -378,7 +378,7 @@ fn stable_exit_codes_distinguish_usage_and_query_errors() {
         .expect("query failure runs");
     assert_eq!(query.status.code(), Some(4));
     assert!(query.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&query.stderr).starts_with("nostos: "));
+    assert!(String::from_utf8_lossy(&query.stderr).starts_with("nostdb: "));
 
     fs::remove_dir_all(directory).expect("temporary directory removes");
 }
@@ -412,7 +412,7 @@ fn every_subcommand_has_real_help_with_accurate_formats() {
         assert!(output.stderr.is_empty(), "{subcommand}");
         assert!(
             String::from_utf8_lossy(&output.stdout)
-                .starts_with(&format!("Usage: nostos {subcommand}")),
+                .starts_with(&format!("Usage: nostdb {subcommand}")),
             "{subcommand}"
         );
     }
@@ -441,7 +441,7 @@ fn every_subcommand_has_real_help_with_accurate_formats() {
 #[test]
 fn format_outputs_canonical_source_without_mutating_the_file() {
     let directory = temp_dir("format");
-    let source = directory.join("main.nostos");
+    let source = directory.join("main.nostdb");
     fs::write(&source, "// retained\nnode alice{name:\"Alice\"}\n").expect("source writes");
 
     let output = command()
@@ -490,12 +490,12 @@ fn format_outputs_canonical_source_without_mutating_the_file() {
 fn source_failures_report_file_range_code_severity_and_message() {
     const OWNER: &str = "11111111-1111-1111-1111-111111111111";
     let directory = temp_dir("diagnostics");
-    let source = directory.join("main.nostos");
+    let source = directory.join("main.nostdb");
     let database = directory.join("graph.ndb");
     fs::write(
-        directory.join("nostos.toml"),
+        directory.join("nostdb.toml"),
         format!(
-            "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostos\"\n\n[modules]\n\"main.nostos\" = \"{OWNER}\"\n"
+            "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostdb\"\n\n[modules]\n\"main.nostdb\" = \"{OWNER}\"\n"
         ),
     )
     .expect("configuration writes");
@@ -516,8 +516,8 @@ fn source_failures_report_file_range_code_severity_and_message() {
     assert!(sync.stdout.is_empty());
     let sync_error = String::from_utf8(sync.stderr).expect("UTF-8 diagnostics");
     for expected in [
-        "main.nostos:bytes ",
-        "NOSTOS-L004",
+        "main.nostdb:bytes ",
+        "NOSTDB-L004",
         "error:",
         "closing delimiter",
     ] {
@@ -538,7 +538,7 @@ fn source_failures_report_file_range_code_severity_and_message() {
     for expected in [
         source.to_str().expect("UTF-8 path"),
         ":bytes ",
-        "NOSTOS-L004",
+        "NOSTDB-L004",
         "error:",
         "closing delimiter",
     ] {
@@ -558,15 +558,15 @@ fn automatic_source_sync_reports_warnings_only_on_stderr() {
     let directory = temp_dir("sync-warnings");
     let database = directory.join("graph.ndb");
     fs::write(
-        directory.join("nostos.toml"),
+        directory.join("nostdb.toml"),
         format!(
-            "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostos\"\n\n[modules]\n\"main.nostos\" = \"{MAIN}\"\n\"people.nostos\" = \"{PEOPLE}\"\n"
+            "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostdb\"\n\n[modules]\n\"main.nostdb\" = \"{MAIN}\"\n\"people.nostdb\" = \"{PEOPLE}\"\n"
         ),
     )
     .expect("configuration writes");
     fs::write(
-        directory.join("main.nostos"),
-        "import \"./people.nostos\" as people\nnode alice {}\nedge alice -> people.bob {}\n",
+        directory.join("main.nostdb"),
+        "import \"./people.nostdb\" as people\nnode alice {}\nedge alice -> people.bob {}\n",
     )
     .expect("source writes");
 
@@ -593,9 +593,9 @@ fn automatic_source_sync_reports_warnings_only_on_stderr() {
         serde_json::json!({"columns": ["value"], "rows": [[1]]})
     );
     let warnings = String::from_utf8(query.stderr).expect("UTF-8 diagnostics");
-    assert!(warnings.contains("main.nostos:bytes "));
-    assert!(warnings.contains("NOSTOS-R005 warning:"));
-    assert!(warnings.contains("NOSTOS-R006 warning:"));
+    assert!(warnings.contains("main.nostdb:bytes "));
+    assert!(warnings.contains("NOSTDB-R005 warning:"));
+    assert!(warnings.contains("NOSTDB-R006 warning:"));
 
     fs::remove_dir_all(directory).expect("temporary directory removes");
 }
@@ -606,14 +606,14 @@ fn edge_json_includes_stable_direction_kind_vocabulary() {
     let directory = temp_dir("edge-kind");
     let database = directory.join("graph.ndb");
     fs::write(
-        directory.join("nostos.toml"),
+        directory.join("nostdb.toml"),
         format!(
-            "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostos\"\n\n[modules]\n\"main.nostos\" = \"{OWNER}\"\n"
+            "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostdb\"\n\n[modules]\n\"main.nostdb\" = \"{OWNER}\"\n"
         ),
     )
     .expect("configuration writes");
     fs::write(
-        directory.join("main.nostos"),
+        directory.join("main.nostdb"),
         "schema DIRECTED {}\nschema DIRECTIONLESS {}\nschema BIDIRECTIONAL {}\n\nnode a {}\nnode b {}\n\nedge a -> b: DIRECTED {}\nedge a - b: DIRECTIONLESS {}\nedge a <-> b: BIDIRECTIONAL {}\n",
     )
     .expect("source writes");
@@ -675,14 +675,14 @@ fn doctor_rejects_source_drift_and_unrelated_databases() {
     let directory = temp_dir("doctor-drift");
     let database = directory.join("graph.ndb");
     fs::write(
-        directory.join("nostos.toml"),
+        directory.join("nostdb.toml"),
         format!(
-            "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostos\"\n\n[modules]\n\"main.nostos\" = \"{OWNER}\"\n"
+            "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostdb\"\n\n[modules]\n\"main.nostdb\" = \"{OWNER}\"\n"
         ),
     )
     .expect("configuration writes");
     fs::write(
-        directory.join("main.nostos"),
+        directory.join("main.nostdb"),
         "node alice {\n  name: \"Alice\"\n  age: 30\n}\n",
     )
     .expect("source writes");
@@ -703,7 +703,7 @@ fn doctor_rejects_source_drift_and_unrelated_databases() {
     );
 
     fs::write(
-        directory.join("main.nostos"),
+        directory.join("main.nostdb"),
         "node alice {\n  name: \"Alice\"\n  age: 31\n}\n",
     )
     .expect("source changes without synchronization");
@@ -724,7 +724,7 @@ fn doctor_rejects_source_drift_and_unrelated_databases() {
         serde_json::from_slice(&drift.stdout).expect("drift status remains machine-readable");
     assert_eq!(drift_status["rows"][0][2], false);
     assert_eq!(drift_status["rows"][0][3], "source_drift");
-    assert!(String::from_utf8_lossy(&drift.stderr).contains("run `nostos sync`"));
+    assert!(String::from_utf8_lossy(&drift.stderr).contains("run `nostdb sync`"));
 
     let unrelated = directory.join("unrelated.ndb");
     let create = command()
@@ -764,14 +764,14 @@ fn source_sync_write_and_administration_use_the_engine_facade() {
     let directory = temp_dir("source");
     let database = directory.join("graph.ndb");
     fs::write(
-        directory.join("nostos.toml"),
+        directory.join("nostdb.toml"),
         format!(
-            "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostos\"\n\n[modules]\n\"main.nostos\" = \"{OWNER}\"\n"
+            "config_version = 1\nlanguage_version = 1\n\n[source]\nlayout = \"colocated\"\nentry = \"main.nostdb\"\n\n[modules]\n\"main.nostdb\" = \"{OWNER}\"\n"
         ),
     )
     .expect("configuration writes");
     fs::write(
-        directory.join("main.nostos"),
+        directory.join("main.nostdb"),
         "schema Person {\n  name: string\n  age: integer\n\n  constraints {\n    required name\n  }\n}\n\nnode alice: Person {\n  name: \"Alice\"\n  age: 30\n}\n",
     )
     .expect("source writes");
@@ -841,7 +841,7 @@ fn source_sync_write_and_administration_use_the_engine_facade() {
         .args([
             "format",
             "--file",
-            directory.join("main.nostos").to_str().expect("UTF-8 path"),
+            directory.join("main.nostdb").to_str().expect("UTF-8 path"),
             "--project",
             directory.to_str().expect("UTF-8 path"),
         ])
@@ -892,7 +892,7 @@ fn source_sync_write_and_administration_use_the_engine_facade() {
         "{\"columns\":[\"age\"],\"rows\":[[31]]}\n"
     );
     assert!(
-        fs::read_to_string(directory.join("main.nostos"))
+        fs::read_to_string(directory.join("main.nostdb"))
             .expect("source reads")
             .contains("age: 31")
     );

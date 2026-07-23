@@ -9,11 +9,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use nostos_client::{
+use nostdb_client::{
     Client, ClientError, ClientRequest, ErrorCode as RemoteErrorCode, SNAPSHOT_CHUNK_BYTES,
     ServerResponse,
 };
-use nostos_engine::{
+use nostdb_engine::{
     CompileError, DatabaseError, Digest, EdgeKind, EmbeddedDatabase, Parameters, ProjectCompiler,
     ProjectConfig, ProjectDiagnostic, QueryResult, QueryValue, SchemaInfo, SourceWriteOptions,
     SourceWriter, StableModuleId, StatementResult, SyncError, Synchronizer, UnresolvedInfo,
@@ -30,28 +30,28 @@ const EXIT_IO: u8 = 7;
 const MACHINE_FORMATS: &str = "table|json|jsonl|csv";
 static FORMAT_DIAGNOSTIC_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
-const HELP: &str = "NostosDB command-line client
+const HELP: &str = "NostDB command-line client
 
 Usage:
-    nostos query [QUERY] [--file PATH] [--database PATH|NAME] [--project PATH]
-                 [--server nostos://HOST:PORT] [--credential-file PATH]
+    nostdb query [QUERY] [--file PATH] [--database PATH|NAME] [--project PATH]
+                 [--server nostdb://HOST:PORT] [--credential-file PATH]
                  [--owner MODULE_ID] [--format table|json|jsonl|csv]
                  [--read-only] [--interactive]
-    nostos server ping --server nostos://HOST:PORT [--credential-file PATH]
-    nostos database create NAME|list|inspect NAME|rename NAME NEW_NAME
+    nostdb server ping --server nostdb://HOST:PORT [--credential-file PATH]
+    nostdb database create NAME|list|inspect NAME|rename NAME NEW_NAME
                     |drop NAME --confirm NAME|snapshot NAME --output PATH
                     |restore NAME --file PATH|export-logical NAME --output PATH
                     |import-logical NAME --file PATH
-                    --server nostos://HOST:PORT [--credential-file PATH]
+                    --server nostdb://HOST:PORT [--credential-file PATH]
                     [--format table|json|jsonl|csv]
-    nostos sync --project PATH --database PATH [--format table|json|jsonl|csv]
-    nostos format --file PATH [--project PATH | --language-version VERSION] [--check]
-    nostos check|inspect|stats|schema|unresolved --database PATH
+    nostdb sync --project PATH --database PATH [--format table|json|jsonl|csv]
+    nostdb format --file PATH [--project PATH | --language-version VERSION] [--check]
+    nostdb check|inspect|stats|schema|unresolved --database PATH
                  [--format table|json|jsonl|csv]
-    nostos imports|warnings --project PATH [--format table|json|jsonl|csv]
-    nostos doctor --project PATH --database PATH [--format table|json|jsonl|csv]
-    nostos --help
-    nostos --version
+    nostdb imports|warnings --project PATH [--format table|json|jsonl|csv]
+    nostdb doctor --project PATH --database PATH [--format table|json|jsonl|csv]
+    nostdb --help
+    nostdb --version
 
 Exit codes: 0 success, 2 usage, 3 project/configuration, 4 query,
             5 database/integrity, 6 source conflict, 7 I/O.";
@@ -168,7 +168,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::from(EXIT_SUCCESS),
         Err(error) => {
-            eprintln!("nostos: {}", error.message);
+            eprintln!("nostdb: {}", error.message);
             ExitCode::from(error.code)
         }
     }
@@ -184,7 +184,7 @@ fn run() -> Result<(), CliError> {
         if arguments.len() != 1 {
             return Err(CliError::usage("--version does not accept arguments"));
         }
-        println!("nostos {}", env!("CARGO_PKG_VERSION"));
+        println!("nostdb {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     let command = arguments.remove(0);
@@ -215,24 +215,24 @@ fn run() -> Result<(), CliError> {
 fn command_help(command: &str) -> Result<String, CliError> {
     let usage = match command {
         "query" => format!(
-            "Usage: nostos query [QUERY] [--file PATH] [--database PATH|NAME] [--project PATH]\n       [--server nostos://HOST:PORT] [--credential-file PATH]\n       [--owner MODULE_ID] [--format {MACHINE_FORMATS}] [--read-only] [--interactive]\n\n--owner requires --project. --read-only rejects every mutating statement before execution. Use jsonl for streaming output; multi-statement json is one array and multi-statement csv is rejected."
+            "Usage: nostdb query [QUERY] [--file PATH] [--database PATH|NAME] [--project PATH]\n       [--server nostdb://HOST:PORT] [--credential-file PATH]\n       [--owner MODULE_ID] [--format {MACHINE_FORMATS}] [--read-only] [--interactive]\n\n--owner requires --project. --read-only rejects every mutating statement before execution. Use jsonl for streaming output; multi-statement json is one array and multi-statement csv is rejected."
         ),
-        "server" => "Usage: nostos server ping --server nostos://HOST:PORT [--credential-file PATH]".to_owned(),
+        "server" => "Usage: nostdb server ping --server nostdb://HOST:PORT [--credential-file PATH]".to_owned(),
         "database" => format!(
-            "Usage: nostos database create NAME|list|inspect NAME|rename NAME NEW_NAME\n       |drop NAME --confirm NAME|snapshot NAME --output PATH\n       |restore NAME --file PATH|export-logical NAME --output PATH\n       |import-logical NAME --file PATH\n       --server nostos://HOST:PORT [--credential-file PATH] [--format {MACHINE_FORMATS}]"
+            "Usage: nostdb database create NAME|list|inspect NAME|rename NAME NEW_NAME\n       |drop NAME --confirm NAME|snapshot NAME --output PATH\n       |restore NAME --file PATH|export-logical NAME --output PATH\n       |import-logical NAME --file PATH\n       --server nostdb://HOST:PORT [--credential-file PATH] [--format {MACHINE_FORMATS}]"
         ),
         "sync" => format!(
-            "Usage: nostos sync --project PATH --database PATH [--format {MACHINE_FORMATS}]"
+            "Usage: nostdb sync --project PATH --database PATH [--format {MACHINE_FORMATS}]"
         ),
-        "format" => "Usage: nostos format --file PATH [--project PATH | --language-version VERSION] [--check]".to_owned(),
+        "format" => "Usage: nostdb format --file PATH [--project PATH | --language-version VERSION] [--check]".to_owned(),
         "check" | "inspect" | "stats" | "schema" | "unresolved" => format!(
-            "Usage: nostos {command} --database PATH [--format {MACHINE_FORMATS}]"
+            "Usage: nostdb {command} --database PATH [--format {MACHINE_FORMATS}]"
         ),
         "imports" | "warnings" => format!(
-            "Usage: nostos {command} --project PATH [--format {MACHINE_FORMATS}]"
+            "Usage: nostdb {command} --project PATH [--format {MACHINE_FORMATS}]"
         ),
         "doctor" => format!(
-            "Usage: nostos doctor --project PATH --database PATH [--format {MACHINE_FORMATS}]"
+            "Usage: nostdb doctor --project PATH --database PATH [--format {MACHINE_FORMATS}]"
         ),
         _ => return Err(CliError::usage(format!("unknown command `{command}`\n\n{HELP}"))),
     };
@@ -385,7 +385,7 @@ fn parse_query(arguments: Vec<String>) -> Result<QueryOptions, CliError> {
 fn parse_server(mut arguments: Vec<String>) -> Result<RemoteOptions, CliError> {
     if arguments.first().map(String::as_str) != Some("ping") {
         return Err(CliError::usage(
-            "server command must be `nostos server ping`",
+            "server command must be `nostdb server ping`",
         ));
     }
     arguments.remove(0);
@@ -715,7 +715,7 @@ fn preflight_source_owner(options: &QueryOptions, statements: &[String]) -> Resu
         ProjectConfig::load(project).map_err(|error| CliError::project(error.to_string()))?;
     if !config.modules.values().any(|module_id| *module_id == owner) {
         return Err(CliError::project(
-            "--owner is not mapped by the project's nostos.toml",
+            "--owner is not mapped by the project's nostdb.toml",
         ));
     }
     Ok(())
@@ -781,7 +781,7 @@ fn remote_repl(options: &QueryOptions, client: &mut Client) -> Result<(), CliErr
             stderr,
             "{}",
             if buffer.is_empty() {
-                "nostos> "
+                "nostdb> "
             } else {
                 "...> "
             }
@@ -1086,7 +1086,7 @@ fn execute_one(
                 .modules
                 .iter()
                 .find_map(|(path, id)| (*id == owner_module).then_some(path))
-                .ok_or_else(|| CliError::project("--owner is not mapped by nostos.toml"))?;
+                .ok_or_else(|| CliError::project("--owner is not mapped by nostdb.toml"))?;
             let bytes = fs::read(project.join(relative)).map_err(|error| {
                 CliError::new(
                     EXIT_IO,
@@ -1127,8 +1127,8 @@ fn execute_one(
         .map_err(CliError::database)
 }
 
-fn map_source_write(error: nostos_engine::SourceWriteError) -> CliError {
-    use nostos_engine::SourceWriteError;
+fn map_source_write(error: nostdb_engine::SourceWriteError) -> CliError {
+    use nostdb_engine::SourceWriteError;
     let code = match &error {
         SourceWriteError::Conflict { .. }
         | SourceWriteError::ConfigChanged
@@ -1174,7 +1174,7 @@ fn open_or_create(path: &Path) -> Result<EmbeddedDatabase, CliError> {
     }
 }
 
-fn synchronize(project: &Path, database: &Path) -> Result<nostos_engine::SyncReport, CliError> {
+fn synchronize(project: &Path, database: &Path) -> Result<nostdb_engine::SyncReport, CliError> {
     Synchronizer::default()
         .sync(project, database)
         .map_err(|error| CliError::project(sync_error_message(&error)))
@@ -1241,16 +1241,16 @@ fn diagnose_source_for_format(
 ) -> Option<Vec<ProjectDiagnostic>> {
     let sequence = FORMAT_DIAGNOSTIC_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let directory = env::temp_dir().join(format!(
-        "nostos-format-diagnostics-{}-{sequence}",
+        "nostdb-format-diagnostics-{}-{sequence}",
         std::process::id()
     ));
     if fs::create_dir(&directory).is_err() {
         return None;
     }
-    let config_path = directory.join("nostos.toml");
-    let source_path = directory.join("main.nostos");
+    let config_path = directory.join("nostdb.toml");
+    let source_path = directory.join("main.nostdb");
     let config = format!(
-        "config_version = 1\nlanguage_version = {language_version}\n\n[source]\nlayout = \"single\"\nentry = \"main.nostos\"\n\n[modules]\n\"main.nostos\" = \"00000000-0000-0000-0000-000000000001\"\n"
+        "config_version = 1\nlanguage_version = {language_version}\n\n[source]\nlayout = \"single\"\nentry = \"main.nostdb\"\n\n[modules]\n\"main.nostdb\" = \"00000000-0000-0000-0000-000000000001\"\n"
     );
     let setup = fs::write(&config_path, config).and_then(|()| fs::write(&source_path, source));
     let result = if setup.is_ok() {
@@ -1575,10 +1575,10 @@ fn run_doctor(options: CommonOptions) -> Result<(), CliError> {
         "synchronized" => Ok(()),
         "not_source_managed" => Err(CliError::new(
             EXIT_DATABASE,
-            "database has no Source Mode synchronization manifest and does not belong to this project; run `nostos sync` with the intended database path",
+            "database has no Source Mode synchronization manifest and does not belong to this project; run `nostdb sync` with the intended database path",
         )),
         _ => Err(CliError::project(
-            "source files or project identity differ from the database synchronization manifest; run `nostos sync` before using this database",
+            "source files or project identity differ from the database synchronization manifest; run `nostdb sync` before using this database",
         )),
     }
 }
@@ -1596,7 +1596,7 @@ fn repl(options: QueryOptions, database: &mut Option<EmbeddedDatabase>) -> Resul
             stderr,
             "{}",
             if buffer.is_empty() {
-                "nostos> "
+                "nostdb> "
             } else {
                 "...> "
             }
@@ -1876,8 +1876,8 @@ fn connect_remote(options: &RemoteOptions) -> Result<Client, CliError> {
             )
         })?
     } else {
-        env::var("NOSTOS_CREDENTIAL")
-            .map_err(|_| CliError::usage("set NOSTOS_CREDENTIAL or pass --credential-file PATH"))?
+        env::var("NOSTDB_CREDENTIAL")
+            .map_err(|_| CliError::usage("set NOSTDB_CREDENTIAL or pass --credential-file PATH"))?
     };
     let credential = credential.trim_end_matches(['\r', '\n']);
     if credential.len() < 32 || credential.chars().any(char::is_whitespace) {
@@ -1885,7 +1885,7 @@ fn connect_remote(options: &RemoteOptions) -> Result<Client, CliError> {
             "credential must be one non-whitespace token of at least 32 characters",
         ));
     }
-    Client::connect(&options.server, credential, "nostos-cli").map_err(map_remote_error)
+    Client::connect(&options.server, credential, "nostdb-cli").map_err(map_remote_error)
 }
 
 fn remote_request(client: &mut Client, request: ClientRequest) -> Result<ServerResponse, CliError> {
@@ -1918,7 +1918,7 @@ fn map_remote_error(error: ClientError) -> CliError {
 }
 
 fn frame_response(
-    frame: nostos_client::ServerFrame,
+    frame: nostdb_client::ServerFrame,
     request_id: u64,
 ) -> Result<ServerResponse, CliError> {
     if frame.request_id != request_id {
@@ -1945,7 +1945,7 @@ fn frame_response(
 }
 
 fn render_database_summaries(
-    databases: &[nostos_client::DatabaseSummary],
+    databases: &[nostdb_client::DatabaseSummary],
     format: OutputFormat,
 ) -> Result<(), CliError> {
     let rows = databases
@@ -2719,7 +2719,7 @@ mod tests {
         let query = parse_query(vec![
             "RETURN 1".to_owned(),
             "--server".to_owned(),
-            "nostos://127.0.0.1:7878".to_owned(),
+            "nostdb://127.0.0.1:7878".to_owned(),
             "--database".to_owned(),
             "knowledge".to_owned(),
             "--credential-file".to_owned(),
@@ -2730,7 +2730,7 @@ mod tests {
         assert!(query.read_only);
         assert_eq!(
             query.remote.expect("remote options exist").server,
-            "nostos://127.0.0.1:7878"
+            "nostdb://127.0.0.1:7878"
         );
         assert_eq!(query.common.database, PathBuf::from("knowledge"));
 
@@ -2740,7 +2740,7 @@ mod tests {
             "--confirm".to_owned(),
             "knowledge".to_owned(),
             "--server".to_owned(),
-            "nostos://127.0.0.1:7878".to_owned(),
+            "nostdb://127.0.0.1:7878".to_owned(),
         ])
         .expect("guarded drop parses");
         assert!(matches!(
@@ -2753,7 +2753,7 @@ mod tests {
                 "drop".to_owned(),
                 "knowledge".to_owned(),
                 "--server".to_owned(),
-                "nostos://127.0.0.1:7878".to_owned(),
+                "nostdb://127.0.0.1:7878".to_owned(),
             ])
             .is_err()
         );

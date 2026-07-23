@@ -66,11 +66,11 @@ def channel_diagnostic_environments(
     environments = {"npx": npx_environment}
     for name, binary in {"direct": direct, "npm_global": npm_global}.items():
         environment = os.environ.copy()
-        environment["NOSTOS_BIN"] = str(binary)
+        environment["NOSTDB_BIN"] = str(binary)
         environments[name] = environment
     if homebrew is not None:
         environment = os.environ.copy()
-        environment["NOSTOS_BIN"] = str(homebrew)
+        environment["NOSTDB_BIN"] = str(homebrew)
         environments["homebrew"] = environment
     return environments
 
@@ -102,7 +102,7 @@ def extract(archive: Path, destination: Path) -> Path:
                 if extracted is None:
                     raise CandidateError("cannot read direct archive member")
                 write_member(member.name, extracted.read())
-    candidates = list(destination.rglob("nostos")) + list(destination.rglob("nostos.exe"))
+    candidates = list(destination.rglob("nostdb")) + list(destination.rglob("nostdb.exe"))
     if len(candidates) != 1:
         raise CandidateError("direct archive does not contain exactly one CLI")
     binary = candidates[0]
@@ -113,20 +113,20 @@ def extract(archive: Path, destination: Path) -> Path:
 
 def npm_bin(prefix: Path, global_install: bool) -> Path:
     if os.name == "nt":
-        return prefix / ("nostos.cmd" if global_install else "node_modules/.bin/nostos.cmd")
-    return prefix / ("bin/nostos" if global_install else "node_modules/.bin/nostos")
+        return prefix / ("nostdb.cmd" if global_install else "node_modules/.bin/nostdb.cmd")
+    return prefix / ("bin/nostdb" if global_install else "node_modules/.bin/nostdb")
 
 
 def write_npx_shim(directory: Path, real_npx: str, prefix: Path) -> None:
     python_script = directory / "npx_shim.py"
     python_script.write_text(
         "import os, subprocess, sys\n"
-        "expected = ['--yes', '--package=@nostosdb/cli@0.0.1', 'nostos']\n"
+        "expected = ['--yes', '--package=@nostdb/cli@0.0.1', 'nostdb']\n"
         "if sys.argv[1:4] != expected:\n"
         "    print('unexpected pinned npx command: ' + repr(sys.argv[1:]), file=sys.stderr)\n"
         "    sys.exit(97)\n"
         "command = [os.environ['REAL_NPX'], '--yes', '--offline', '--prefix', "
-        "os.environ['NPX_PREFIX'], 'nostos'] + sys.argv[4:]\n"
+        "os.environ['NPX_PREFIX'], 'nostdb'] + sys.argv[4:]\n"
         "sys.exit(subprocess.run(command).returncode)\n",
         encoding="utf-8",
     )
@@ -138,12 +138,12 @@ def write_npx_shim(directory: Path, real_npx: str, prefix: Path) -> None:
         cli.parent.mkdir(parents=True)
         cli.write_text(
             "const { spawnSync } = require('node:child_process');\n"
-            "const expected = ['--yes', '--package=@nostosdb/cli@0.0.1', 'nostos'];\n"
+            "const expected = ['--yes', '--package=@nostdb/cli@0.0.1', 'nostdb'];\n"
             "if (JSON.stringify(process.argv.slice(2, 5)) !== JSON.stringify(expected)) {\n"
             "  console.error('unexpected pinned npx command'); process.exit(97);\n"
             "}\n"
             "const args = ['--yes', '--offline', '--prefix', process.env.NPX_PREFIX, "
-            "'nostos', ...process.argv.slice(5)];\n"
+            "'nostdb', ...process.argv.slice(5)];\n"
             "const result = spawnSync(process.execPath, [process.env.REAL_NPX_CLI, ...args], "
             "{stdio: 'inherit'});\n"
             "process.exit(result.status === null ? 3 : result.status);\n",
@@ -193,7 +193,7 @@ def fixture_diagnostic(project: Path, *, env=None):
     return diagnostic(
         [
             sys.executable,
-            project / ".agents" / "skills" / "nostos" / "scripts" / "nostos_core.py",
+            project / ".agents" / "skills" / "nostdb" / "scripts" / "nostdb_core.py",
             "run",
             "--project",
             project,
@@ -225,7 +225,7 @@ def main() -> int:
         real_npx = shutil.which("npx")
         if real_npx is None:
             raise CandidateError("npx is required for channel verification")
-        with tempfile.TemporaryDirectory(prefix="nostos-channel-verification-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="nostdb-channel-verification-") as temporary:
             root = Path(temporary)
             candidate = root / "candidate"
             archive = Path(
@@ -296,7 +296,7 @@ def main() -> int:
                 "npm_local": local_binary,
             }.items():
                 version = run([binary, "--version"])
-                if version != "nostos {}\n".format(release_manifest()["version"]):
+                if version != "nostdb {}\n".format(release_manifest()["version"]):
                     raise CandidateError("{} version mismatch".format(channel))
             results = {
                 "direct": fixture(skills, root / "fixture-direct", binary=direct),
@@ -308,7 +308,7 @@ def main() -> int:
             shim_directory.mkdir()
             write_npx_shim(shim_directory, real_npx, local_prefix)
             npx_environment = os.environ.copy()
-            npx_environment.pop("NOSTOS_BIN", None)
+            npx_environment.pop("NOSTDB_BIN", None)
             npx_environment["PATH"] = str(shim_directory) + os.pathsep + os.environ["PATH"]
             npx_environment["REAL_NPX"] = real_npx
             if os.name == "nt":
@@ -385,7 +385,7 @@ def main() -> int:
             )
         return 0
     except (CandidateError, OSError, ValueError, subprocess.SubprocessError) as error:
-        print("nostos-channel-verifier: {}".format(error), file=sys.stderr)
+        print("nostdb-channel-verifier: {}".format(error), file=sys.stderr)
         return 1
 
 

@@ -97,9 +97,9 @@ def is_translated_process() -> bool:
 
 
 def executable_name(target: str) -> str:
-    return "nostos.exe" if "windows" in target else "nostos"
+    return "nostdb.exe" if "windows" in target else "nostdb"
 
 
 def archive_name(version: str, target: str, archive_kind: str) -> str:
     suffix = ".zip" if archive_kind == "zip" else ".tar.gz"
-    return "nostos-{}-{}{}".format(version, target, suffix)
+    return "nostdb-{}-{}{}".format(version, target, suffix)

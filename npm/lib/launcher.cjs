@@ -37,7 +37,7 @@ function launchBinary(binary, arguments_, options = {}) {
   };
   child.on("error", (error) => {
     cleanup();
-    console.error(`nostos launcher: cannot execute ${binary}: ${error.message}`);
+    console.error(`nostdb launcher: cannot execute ${binary}: ${error.message}`);
     process.exitCode = 3;
   });
   child.on("exit", (code, signalName) => {
@@ -57,7 +57,7 @@ function run(arguments_) {
     const binary = resolveBinary({ version });
     return launchBinary(binary, arguments_);
   } catch (error) {
-    console.error(`nostos launcher: ${error.message}`);
+    console.error(`nostdb launcher: ${error.message}`);
     process.exitCode = 3;
     return null;
   }

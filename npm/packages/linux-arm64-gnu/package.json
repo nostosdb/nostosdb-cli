@@ -1,11 +1,11 @@
 {
-  "name": "@nostosdb/cli-linux-arm64-gnu",
+  "name": "@nostdb/cli-linux-arm64-gnu",
   "version": "0.0.1",
-  "description": "NostosDB CLI for GNU/Linux ARM64",
+  "description": "NostDB CLI for GNU/Linux ARM64",
   "license": "SSPL-1.0",
   "os": ["linux"],
   "cpu": ["arm64"],
   "libc": ["glibc"],
-  "files": ["bin/nostos", "LICENSE", "NOTICE", "README.md"],
+  "files": ["bin/nostdb", "LICENSE", "NOTICE", "README.md"],
   "publishConfig": {"access": "public"}
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble one deterministic, target-native-proven Nostos CLI candidate."""
+"""Assemble one deterministic, target-native-proven NostDB CLI candidate."""
 
 import argparse
 import gzip
@@ -44,7 +44,7 @@ def tar_gzip(path: Path, prefix: str, files) -> None:
             data = source.read_bytes()
             info = tarfile.TarInfo("{}/{}".format(prefix, name))
             info.size = len(data)
-            info.mode = 0o755 if name == "nostos" else 0o644
+            info.mode = 0o755 if name == "nostdb" else 0o644
             info.mtime = 0
             info.uid = 0
             info.gid = 0
@@ -96,7 +96,7 @@ def main() -> int:
         help_test = tests.get("help", {})
         if (
             version_test.get("returncode") != 0
-            or version_test.get("stdout") != "nostos {}\n".format(manifest["version"])
+            or version_test.get("stdout") != "nostdb {}\n".format(manifest["version"])
             or help_test.get("returncode") != 0
             or "Usage:" not in help_test.get("stdout", "")
         ):
@@ -139,7 +139,7 @@ def main() -> int:
         print(archive.resolve())
         return 0
     except (CandidateError, OSError, ValueError) as error:
-        print("nostos-assemble: {}".format(error), file=sys.stderr)
+        print("nostdb-assemble: {}".format(error), file=sys.stderr)
         return 1
 
 

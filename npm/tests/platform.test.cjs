@@ -18,17 +18,17 @@ const glibcReport = {
 };
 
 test("selects every declared OS and CPU package", () => {
-  assert.equal(packageFor("darwin", "arm64"), "@nostosdb/cli-darwin-arm64");
-  assert.equal(packageFor("darwin", "x64"), "@nostosdb/cli-darwin-x64");
-  assert.equal(packageFor("win32", "arm64"), "@nostosdb/cli-win32-arm64");
-  assert.equal(packageFor("win32", "x64"), "@nostosdb/cli-win32-x64");
+  assert.equal(packageFor("darwin", "arm64"), "@nostdb/cli-darwin-arm64");
+  assert.equal(packageFor("darwin", "x64"), "@nostdb/cli-darwin-x64");
+  assert.equal(packageFor("win32", "arm64"), "@nostdb/cli-win32-arm64");
+  assert.equal(packageFor("win32", "x64"), "@nostdb/cli-win32-x64");
   assert.equal(
     packageFor("linux", "arm64", glibcReport),
-    "@nostosdb/cli-linux-arm64-gnu",
+    "@nostdb/cli-linux-arm64-gnu",
   );
   assert.equal(
     packageFor("linux", "x64", glibcReport),
-    "@nostosdb/cli-linux-x64-gnu",
+    "@nostdb/cli-linux-x64-gnu",
   );
 });
 
@@ -42,7 +42,7 @@ test("rejects unsupported operating systems, CPUs, and Linux libc", () => {
 });
 
 test("requires an exact-version platform package and executable", (context) => {
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nostos-platform-test-"));
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nostdb-platform-test-"));
   context.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
   const packageRoot = path.join(temporary, "package");
   const binaryDirectory = path.join(packageRoot, "bin");
@@ -50,12 +50,12 @@ test("requires an exact-version platform package and executable", (context) => {
   const manifestPath = path.join(packageRoot, "package.json");
   fs.writeFileSync(
     manifestPath,
-    JSON.stringify({ name: "@nostosdb/cli-darwin-arm64", version: "0.0.1" }),
+    JSON.stringify({ name: "@nostdb/cli-darwin-arm64", version: "0.0.1" }),
   );
-  const binary = path.join(binaryDirectory, "nostos");
+  const binary = path.join(binaryDirectory, "nostdb");
   fs.writeFileSync(binary, "fixture");
   const resolvePackage = (request) => {
-    assert.equal(request, "@nostosdb/cli-darwin-arm64/package.json");
+    assert.equal(request, "@nostdb/cli-darwin-arm64/package.json");
     return manifestPath;
   };
   assert.equal(

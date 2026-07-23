@@ -33,7 +33,7 @@ def main() -> int:
         if set(launcher["optionalDependencies"]) != expected_packages:
             raise CandidateError("npm optional packages do not match release targets")
         for package_name in expected_packages:
-            directory = package_name.replace("@nostosdb/cli-", "")
+            directory = package_name.replace("@nostdb/cli-", "")
             package = json.loads(
                 (npm_root / "packages" / directory / "package.json").read_text(
                     encoding="utf-8"
@@ -68,7 +68,7 @@ def main() -> int:
         )
         return 0
     except (CandidateError, OSError, ValueError, KeyError) as error:
-        print("nostos-distribution-source: {}".format(error), file=sys.stderr)
+        print("nostdb-distribution-source: {}".format(error), file=sys.stderr)
         return 1
 
 

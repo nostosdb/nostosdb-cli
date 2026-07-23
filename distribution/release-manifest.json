@@ -1,36 +1,36 @@
 {
   "schema_version": 1,
   "version": "0.0.1",
-  "binary": "nostos",
+  "binary": "nostdb",
   "targets": {
     "aarch64-apple-darwin": {
       "archive": "tar.gz",
-      "npm_package": "@nostosdb/cli-darwin-arm64",
+      "npm_package": "@nostdb/cli-darwin-arm64",
       "runner": "macos-14"
     },
     "x86_64-apple-darwin": {
       "archive": "tar.gz",
-      "npm_package": "@nostosdb/cli-darwin-x64",
+      "npm_package": "@nostdb/cli-darwin-x64",
       "runner": "macos-15-intel"
     },
     "aarch64-pc-windows-msvc": {
       "archive": "zip",
-      "npm_package": "@nostosdb/cli-win32-arm64",
+      "npm_package": "@nostdb/cli-win32-arm64",
       "runner": "windows-11-arm"
     },
     "x86_64-pc-windows-msvc": {
       "archive": "zip",
-      "npm_package": "@nostosdb/cli-win32-x64",
+      "npm_package": "@nostdb/cli-win32-x64",
       "runner": "windows-2022"
     },
     "aarch64-unknown-linux-gnu": {
       "archive": "tar.gz",
-      "npm_package": "@nostosdb/cli-linux-arm64-gnu",
+      "npm_package": "@nostdb/cli-linux-arm64-gnu",
       "runner": "ubuntu-22.04-arm"
     },
     "x86_64-unknown-linux-gnu": {
       "archive": "tar.gz",
-      "npm_package": "@nostosdb/cli-linux-x64-gnu",
+      "npm_package": "@nostdb/cli-linux-x64-gnu",
       "runner": "ubuntu-22.04"
     }
   }

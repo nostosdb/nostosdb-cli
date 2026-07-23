@@ -61,7 +61,7 @@ def main() -> int:
         if stage.exists():
             raise CandidateError("refusing to replace npm stage: {}".format(stage))
         args.output.mkdir(parents=True, exist_ok=True)
-        package_directory = details["npm_package"].replace("@nostosdb/cli-", "")
+        package_directory = details["npm_package"].replace("@nostdb/cli-", "")
         platform_source = ROOT / "npm" / "packages" / package_directory
         platform_stage = stage / "platform"
         launcher_stage = stage / "launcher"
@@ -93,7 +93,7 @@ def main() -> int:
         print(json.dumps(payload, sort_keys=True))
         return 0
     except (CandidateError, OSError, ValueError, subprocess.SubprocessError) as error:
-        print("nostos-npm-candidate: {}".format(error), file=sys.stderr)
+        print("nostdb-npm-candidate: {}".format(error), file=sys.stderr)
         return 1
 
 

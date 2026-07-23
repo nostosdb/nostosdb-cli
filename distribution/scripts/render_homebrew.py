@@ -58,7 +58,7 @@ def main() -> int:
             )
             x64_url, x64_hash = checked_archive(args.x64_archive, TARGETS["x64"])
         template = (
-            ROOT / "distribution" / "homebrew" / "Formula" / "nostos.rb.in"
+            ROOT / "distribution" / "homebrew" / "Formula" / "nostdb.rb.in"
         ).read_text(encoding="utf-8")
         replacements = {
             "@ARM64_SHA256@": arm_hash,
@@ -84,7 +84,7 @@ def main() -> int:
         print(args.output.resolve())
         return 0
     except (CandidateError, OSError, ValueError) as error:
-        print("nostos-homebrew: {}".format(error), file=sys.stderr)
+        print("nostdb-homebrew: {}".format(error), file=sys.stderr)
         return 1
 
 

@@ -1,6 +1,6 @@
 [package]
-name = "nostos-cli"
-description = "Command-line and interactive client for NostosDB"
+name = "nostdb-cli"
+description = "Command-line and interactive client for NostDB"
 edition = "2024"
 license = "SSPL-1.0"
 publish = false
@@ -8,13 +8,13 @@ rust-version = "1.85"
 version = "0.0.1"
 
 [[bin]]
-name = "nostos"
+name = "nostdb"
 path = "src/main.rs"
 
 [dependencies]
 base64 = "=0.22.1"
-nostos-client = { path = "../nostosdb-server/client", version = "0.0.1" }
-nostos-engine = { path = "../nostosdb-core/crates/nostos-engine", version = "0.0.1" }
+nostdb-client = { path = "../nostdb-server/client", version = "0.0.1" }
+nostdb-engine = { path = "../nostdb-core/crates/nostdb-engine", version = "0.0.1" }
 serde_json = "1.0.150"
 
 [lints.rust]

@@ -32,7 +32,7 @@ def main() -> int:
         target = host_target()
         run(["cargo", "build", "--release", "--all-features", "--locked"])
         binary = ROOT / "target" / "release" / executable_name(target)
-        with tempfile.TemporaryDirectory(prefix="nostos-local-distribution-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="nostdb-local-distribution-") as temporary:
             output = Path(temporary)
             metadata = output / "metadata"
             evidence = output / "native.json"
@@ -74,7 +74,7 @@ def main() -> int:
             )
         return 0
     except (CandidateError, OSError, subprocess.SubprocessError) as error:
-        print("nostos-local-distribution: {}".format(error), file=sys.stderr)
+        print("nostdb-local-distribution: {}".format(error), file=sys.stderr)
         return 1
 
 

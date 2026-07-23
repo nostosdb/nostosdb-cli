@@ -1,5 +1,12 @@
-# Contributing to nostosdb-cli
+# Contribution policy for nostdb-cli
 
-The CLI source is available for evaluation, but external contributions are closed pending the project legal/CLA gates. Do not submit patches or pull requests expecting inclusion; [CLA.md](CLA.md) is status only.
+The CLI source is available for evaluation, but external contributions are not
+accepted. This is the repository's operating model, not a temporary legal hold.
+Do not submit patches or pull requests expecting review or inclusion.
 
-Use [SECURITY.md](SECURITY.md) for vulnerabilities. Prospective contributors can run all checks in [README.md](README.md). When intake opens, CLI changes must consume public Engine APIs, keep machine stdout clean, preserve stable declared exit behavior, and never duplicate parsing/storage/sync/query logic.
+Use [SECURITY.md](SECURITY.md) for vulnerabilities. Public feedback must not
+include proposed implementation content or private data and is not a
+contribution grant. Only work authored or commissioned by copyright holder
+Jongho Yoo under an appropriate written rights arrangement may be added. No
+public CLA or DCO intake is offered; see [CLA.md](CLA.md). You may run all checks
+in [README.md](README.md) when evaluating the current source.

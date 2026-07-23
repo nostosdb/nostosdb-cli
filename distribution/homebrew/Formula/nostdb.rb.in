@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: SSPL-1.0
 # Generated candidate template. Publication requires separate authorization.
 
-class Nostos < Formula
+class Nostdb < Formula
   desc "Source-first property graph database CLI"
-  homepage "https://github.com/nostosdb/nostosdb-cli"
+  homepage "https://github.com/nostdb/nostdb-cli"
   version "@VERSION@"
   license "SSPL-1.0"
 
@@ -18,10 +18,10 @@ class Nostos < Formula
   end
 
   def install
-    bin.install "nostos"
+    bin.install "nostdb"
   end
 
   test do
-    assert_equal "nostos #{version}", shell_output("#{bin}/nostos --version").strip
+    assert_equal "nostdb #{version}", shell_output("#{bin}/nostdb --version").strip
   end
 end

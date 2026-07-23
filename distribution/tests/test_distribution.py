@@ -29,36 +29,36 @@ def invoke(*arguments, cwd=None):
 
 class DistributionTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = Path(tempfile.mkdtemp(prefix="nostos-distribution-test-"))
+        self.temporary = Path(tempfile.mkdtemp(prefix="nostdb-distribution-test-"))
 
     def tearDown(self):
         shutil.rmtree(self.temporary)
 
     def fake_binary(self):
         if sys.platform == "win32":
-            binary = self.temporary / "nostos.cmd"
+            binary = self.temporary / "nostdb.cmd"
             binary.write_text(
                 "@echo off\n"
                 "if \"%~1\"==\"--version\" (\n"
-                "  echo nostos 0.0.1\n"
+                "  echo nostdb 0.0.1\n"
                 "  exit /b 0\n"
                 ")\n"
                 "if \"%~1\"==\"--help\" (\n"
-                "  echo Usage: nostos COMMAND\n"
+                "  echo Usage: nostdb COMMAND\n"
                 "  exit /b 0\n"
                 ")\n"
                 "exit /b 2\n",
                 encoding="utf-8",
             )
             return binary
-        binary = self.temporary / "nostos"
+        binary = self.temporary / "nostdb"
         binary.write_text(
             "#!{}\n"
             "import sys\n"
             "if sys.argv[1:] == ['--version']:\n"
-            "    print('nostos 0.0.1')\n"
+            "    print('nostdb 0.0.1')\n"
             "elif sys.argv[1:] == ['--help']:\n"
-            "    print('Usage: nostos COMMAND')\n"
+            "    print('Usage: nostdb COMMAND')\n"
             "else:\n"
             "    sys.exit(2)\n".format(sys.executable),
             encoding="utf-8",
@@ -69,22 +69,22 @@ class DistributionTests(unittest.TestCase):
     def test_channel_diagnostics_explicitly_authorize_each_installed_binary(self):
         npx_environment = {"PATH": "npx-only"}
         environments = channel_diagnostic_environments(
-            Path("/candidate/direct/nostos"),
-            Path("/candidate/npm/bin/nostos"),
+            Path("/candidate/direct/nostdb"),
+            Path("/candidate/npm/bin/nostdb"),
             npx_environment,
-            Path("/candidate/homebrew/nostos"),
+            Path("/candidate/homebrew/nostdb"),
         )
         self.assertIs(environments["npx"], npx_environment)
         self.assertEqual(
-            environments["direct"]["NOSTOS_BIN"], "/candidate/direct/nostos"
+            environments["direct"]["NOSTDB_BIN"], "/candidate/direct/nostdb"
         )
         self.assertEqual(
-            environments["npm_global"]["NOSTOS_BIN"],
-            "/candidate/npm/bin/nostos",
+            environments["npm_global"]["NOSTDB_BIN"],
+            "/candidate/npm/bin/nostdb",
         )
         self.assertEqual(
-            environments["homebrew"]["NOSTOS_BIN"],
-            "/candidate/homebrew/nostos",
+            environments["homebrew"]["NOSTDB_BIN"],
+            "/candidate/homebrew/nostdb",
         )
 
     def metadata(self):
@@ -109,10 +109,10 @@ class DistributionTests(unittest.TestCase):
                     "target": target,
                     "translated": False,
                     "tests": {
-                        "help": {"returncode": 0, "stdout": "Usage: nostos\n"},
+                        "help": {"returncode": 0, "stdout": "Usage: nostdb\n"},
                         "version": {
                             "returncode": 0,
-                            "stdout": "nostos 0.0.1\n",
+                            "stdout": "nostdb 0.0.1\n",
                         },
                     },
                     "version": "0.0.1",
@@ -230,7 +230,7 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
         self.assertFalse(payload["published"])
-        self.assertEqual(payload["launcher"]["name"], "@nostosdb/cli")
+        self.assertEqual(payload["launcher"]["name"], "@nostdb/cli")
         launcher = output / payload["launcher"]["filename"]
         platform = output / payload["platform"]["filename"]
         self.assertTrue(launcher.is_file())
@@ -246,7 +246,7 @@ class DistributionTests(unittest.TestCase):
             self.assertEqual(contents["package/NOTICE"], (ROOT / "NOTICE").read_bytes())
             self.assertEqual(contents["package/README.md"], (ROOT / "README.md").read_bytes())
             if archive == platform:
-                executable = "nostos.exe" if "windows" in target else "nostos"
+                executable = "nostdb.exe" if "windows" in target else "nostdb"
                 self.assertEqual(
                     contents["package/bin/{}".format(executable)], binary.read_bytes()
                 )
@@ -265,7 +265,7 @@ class DistributionTests(unittest.TestCase):
                 json.dumps(record), encoding="utf-8"
             )
             archives[target] = archive
-        formula = self.temporary / "Formula" / "nostos.rb"
+        formula = self.temporary / "Formula" / "nostdb.rb"
         rendered = invoke(
             sys.executable,
             SCRIPTS / "render_homebrew.py",
@@ -299,7 +299,7 @@ class DistributionTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        formula = self.temporary / "smoke" / "Formula" / "nostos.rb"
+        formula = self.temporary / "smoke" / "Formula" / "nostdb.rb"
         rendered = invoke(
             sys.executable,
             SCRIPTS / "render_homebrew.py",

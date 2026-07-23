@@ -56,7 +56,7 @@ def main() -> int:
         if len(roots) != 1:
             raise CandidateError("archive must contain exactly one root directory")
         relative = {name.split("/", 1)[1] for name in names if "/" in name}
-        binary = "nostos.exe" if "windows" in record["target"] else "nostos"
+        binary = "nostdb.exe" if "windows" in record["target"] else "nostdb"
         required = REQUIRED | {binary}
         if relative != required:
             raise CandidateError(
@@ -85,7 +85,7 @@ def main() -> int:
         print("verified {}".format(archive.name))
         return 0
     except (CandidateError, OSError, ValueError, KeyError, tarfile.TarError) as error:
-        print("nostos-candidate-verifier: {}".format(error), file=sys.stderr)
+        print("nostdb-candidate-verifier: {}".format(error), file=sys.stderr)
         return 1
 
 

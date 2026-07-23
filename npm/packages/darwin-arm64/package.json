@@ -1,10 +1,10 @@
 {
-  "name": "@nostosdb/cli-darwin-arm64",
+  "name": "@nostdb/cli-darwin-arm64",
   "version": "0.0.1",
-  "description": "NostosDB CLI for macOS Apple Silicon",
+  "description": "NostDB CLI for macOS Apple Silicon",
   "license": "SSPL-1.0",
   "os": ["darwin"],
   "cpu": ["arm64"],
-  "files": ["bin/nostos", "LICENSE", "NOTICE", "README.md"],
+  "files": ["bin/nostdb", "LICENSE", "NOTICE", "README.md"],
   "publishConfig": {"access": "public"}
 }
