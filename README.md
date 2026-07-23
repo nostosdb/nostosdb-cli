@@ -27,12 +27,12 @@ cargo build --locked
 NOSTDB_BIN="$PWD/target/debug/nostdb"
 PREVIEW_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nostdb-cli.XXXXXX")"
 "$NOSTDB_BIN" query 'RETURN 1 AS value' \
-  --database "$PREVIEW_DIR/graph.ndb" --format json
+  --database "$PREVIEW_DIR/graph.nostdb" --format json
 ```
 
 ## Source Mode preview
 
-From the Root multi-repository checkout, this complete disposable workflow uses the installed-provider path and does not require hand-editing `nostdb.toml`. The helper writes `.nostdb`; every deterministic parse, format, synchronization, query, and `.ndb` operation still goes through the source-built CLI/Core.
+From the Root multi-repository checkout, this complete disposable workflow uses the installed-provider path and does not require hand-editing `nostdb.json`. The helper writes `.nost`; every deterministic parse, format, synchronization, query, and `.nostdb` operation still goes through the source-built CLI/Core.
 
 ```bash
 cargo build --manifest-path nostdb-cli/Cargo.toml --locked
@@ -41,31 +41,30 @@ PREVIEW_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nostdb-source-preview.XXXXXX")"
 OWNER="11111111-1111-1111-1111-111111111111"
 
 python3 skills/scripts/nostdb_skill.py init \
-  --project "$PREVIEW_DIR" \
-  --layout centralized \
+  --src "$PREVIEW_DIR" \
   --core-provider installed \
   --core-binary "$NOSTDB_BIN" \
   --module-id "$OWNER"
 
 "$NOSTDB_BIN" sync \
   --project "$PREVIEW_DIR" \
-  --database "$PREVIEW_DIR/graph.ndb" \
+  --database "$PREVIEW_DIR/graph.nostdb" \
   --format json
 "$NOSTDB_BIN" imports --project "$PREVIEW_DIR" --format table
 "$NOSTDB_BIN" query \
   "CREATE (n {name: 'Alice'}) RETURN n.name AS name" \
   --project "$PREVIEW_DIR" \
-  --database "$PREVIEW_DIR/graph.ndb" \
+  --database "$PREVIEW_DIR/graph.nostdb" \
   --owner "$OWNER" \
   --format json
 "$NOSTDB_BIN" query \
   "MATCH (n {name: 'Alice'}) RETURN n.name AS name" \
   --project "$PREVIEW_DIR" \
-  --database "$PREVIEW_DIR/graph.ndb" \
+  --database "$PREVIEW_DIR/graph.nostdb" \
   --format json
 "$NOSTDB_BIN" doctor \
   --project "$PREVIEW_DIR" \
-  --database "$PREVIEW_DIR/graph.ndb" \
+  --database "$PREVIEW_DIR/graph.nostdb" \
   --format json
 ```
 
@@ -77,19 +76,19 @@ For query files or pipes, use the same executable and a database under a disposa
 
 ```bash
 "$NOSTDB_BIN" query --file report.cypher \
-  --database "$PREVIEW_DIR/graph.ndb" --format json
+  --database "$PREVIEW_DIR/graph.nostdb" --format json
 cat report.cypher | "$NOSTDB_BIN" query \
-  --database "$PREVIEW_DIR/graph.ndb" --format jsonl
-"$NOSTDB_BIN" format --file graph.nostdb
-"$NOSTDB_BIN" format --file graph.nostdb --check
+  --database "$PREVIEW_DIR/graph.nostdb" --format jsonl
+"$NOSTDB_BIN" format --file graph.nost
+"$NOSTDB_BIN" format --file graph.nost --check
 ```
 
-Use `query --read-only` for tooling that must never execute a graph mutation, including visualization and inspection helpers. For non-interactive one-shot input, the CLI classifies every statement through Core before local synchronization or database creation; it also sets the Server protocol's read-only enforcement flag for remote queries. A permitted Source Mode read can still synchronize the authoritative `.nostdb` snapshot before querying it. Interactive Source Mode also synchronizes when the session starts because its later input is not yet available for preflight.
+Use `query --read-only` for tooling that must never execute a graph mutation, including visualization and inspection helpers. For non-interactive one-shot input, the CLI classifies every statement through Core before local synchronization or database creation; it also sets the Server protocol's read-only enforcement flag for remote queries. A permitted Source Mode read can still synchronize the authoritative `.nost` snapshot before querying it. Interactive Source Mode also synchronizes when the session starts because its later input is not yet available for preflight.
 
 ```bash
 "$NOSTDB_BIN" query \
   "MATCH (n) RETURN n" \
-  --database "$PREVIEW_DIR/graph.ndb" \
+  --database "$PREVIEW_DIR/graph.nostdb" \
   --read-only \
   --format json
 ```
@@ -108,7 +107,7 @@ nostdb query 'MATCH (n) RETURN n' --server nostdb://127.0.0.1:7878 \
 
 Database commands include create/list/inspect/rename, exact-name-confirmed drop, physical snapshot/restore, and logical export/import. The remote REPL supports `:ping`, `:begin`, `:commit`, and `:rollback`. Credentials come only from `NOSTDB_CREDENTIAL` or `--credential-file`; there is no credential command-line value.
 
-`format` sends one complete source file through the public Core canonical formatter. By default it writes the formatted source to stdout without changing the input; `--check` returns project exit code 3 when the input is not already canonical. Use `--project` to read `language_version` from `nostdb.toml`, or supply `--language-version` explicitly.
+`format` sends one complete source file through the public Core canonical formatter. By default it writes the formatted source to stdout without changing the input; `--check` returns project exit code 3 when the input is not already canonical. Use `--project` to read `language_version` from `nostdb.json`, or supply `--language-version` explicitly.
 
 Standalone `schema`, `unresolved`, `imports`, and `warnings` commands expose the same administration data as the REPL in table or JSON form for scripts and Agent Skills.
 

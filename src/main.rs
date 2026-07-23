@@ -360,9 +360,10 @@ fn parse_query(arguments: Vec<String>) -> Result<QueryOptions, CliError> {
         return Err(CliError::usage("--credential-file requires --server"));
     }
     let database = database.unwrap_or_else(|| {
-        project
-            .as_ref()
-            .map_or_else(|| PathBuf::from("graph.ndb"), |root| root.join("graph.ndb"))
+        project.as_ref().map_or_else(
+            || PathBuf::from("graph.nostdb"),
+            |root| root.join("graph.nostdb"),
+        )
     });
     Ok(QueryOptions {
         common: CommonOptions {
@@ -715,7 +716,7 @@ fn preflight_source_owner(options: &QueryOptions, statements: &[String]) -> Resu
         ProjectConfig::load(project).map_err(|error| CliError::project(error.to_string()))?;
     if !config.modules.values().any(|module_id| *module_id == owner) {
         return Err(CliError::project(
-            "--owner is not mapped by the project's nostdb.toml",
+            "--owner is not mapped by the project's nostdb.json",
         ));
     }
     Ok(())
@@ -1086,7 +1087,7 @@ fn execute_one(
                 .modules
                 .iter()
                 .find_map(|(path, id)| (*id == owner_module).then_some(path))
-                .ok_or_else(|| CliError::project("--owner is not mapped by nostdb.toml"))?;
+                .ok_or_else(|| CliError::project("--owner is not mapped by nostdb.json"))?;
             let bytes = fs::read(project.join(relative)).map_err(|error| {
                 CliError::new(
                     EXIT_IO,
@@ -1247,10 +1248,10 @@ fn diagnose_source_for_format(
     if fs::create_dir(&directory).is_err() {
         return None;
     }
-    let config_path = directory.join("nostdb.toml");
-    let source_path = directory.join("main.nostdb");
+    let config_path = directory.join("nostdb.json");
+    let source_path = directory.join("main.nost");
     let config = format!(
-        "config_version = 1\nlanguage_version = {language_version}\n\n[source]\nlayout = \"single\"\nentry = \"main.nostdb\"\n\n[modules]\n\"main.nostdb\" = \"00000000-0000-0000-0000-000000000001\"\n"
+        "{{\"config_version\":2,\"language_version\":{language_version},\"source\":{{\"layout\":\"single\",\"entry\":\"main.nost\"}},\"modules\":{{\"main.nost\":\"00000000-0000-0000-0000-000000000001\"}}}}\n"
     );
     let setup = fs::write(&config_path, config).and_then(|()| fs::write(&source_path, source));
     let result = if setup.is_ok() {
