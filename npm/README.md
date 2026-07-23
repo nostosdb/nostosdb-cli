@@ -1,5 +1,9 @@
 # `@nostdb/cli` candidate launcher
 
-This unpublished candidate contains one dependency-free JavaScript launcher for the SSPL-1.0 `nostdb` CLI. It selects the exact-version native optional package for the current OS and CPU, then delegates without implementing database behavior.
+Version `0.0.1` of this dependency-free JavaScript launcher and its six
+SSPL-1.0 native packages is published under `latest` and `next`. It selects the
+exact-version native optional package for the current OS and CPU, then delegates
+without implementing database behavior.
 
-No package in this directory is published by its tests or candidate scripts. See the repository [distribution contract](../DISTRIBUTION.md).
+Tests and candidate scripts in this directory never publish by themselves. See
+the repository [distribution contract](../DISTRIBUTION.md).

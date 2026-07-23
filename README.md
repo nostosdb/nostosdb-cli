@@ -2,9 +2,21 @@
 
 Source-available command-line consumer of the NostDB engine, licensed under SSPL-1.0.
 
-Public-preview source only: no supported binary, installer, stable database format, or external contribution intake exists. See [PREVIEW.md](PREVIEW.md), [SECURITY.md](SECURITY.md), and [CLA status](CLA.md).
+Unsupported public-preview source and npm binaries are available, but no
+production support, stable database format, or external contribution intake
+exists. See [PREVIEW.md](PREVIEW.md), [SECURITY.md](SECURITY.md), and
+[CLA status](CLA.md).
 
-The [distribution contract](DISTRIBUTION.md) provides the same Core-containing `nostdb` executable through npm, pinned `npx` zero-install execution, Homebrew, and direct archives. Candidate launchers, packages, archives, and local verification tools are implemented, but none of those channels is published.
+The [distribution contract](DISTRIBUTION.md) provides the same Core-containing
+`nostdb` executable through npm, pinned `npx` zero-install execution, Homebrew,
+and direct archives. The unsupported npm `0.0.1` launcher and six native
+packages are published under `latest` and `next`; Homebrew and direct archives
+remain unpublished candidates.
+
+```bash
+npm install --global @nostdb/cli@0.0.1
+nostdb --version
+```
 
 The CLI provides one-shot, query-file, piped-stdin, and interactive query modes. Embedded and Source Mode call the public `nostdb-engine` facade. Server Mode uses the thin `nostdb-client` protocol crate and never opens daemon-managed files or depends on HTTP endpoints. It also provides synchronization, integrity checks, inspection, project diagnostics, graph statistics, and named Database administration.
 
