@@ -24,7 +24,7 @@ const actualDirectories = fs
 assert.deepEqual(actualDirectories, expectedDirectories);
 assert.equal(launcher.name, "@nostdb/cli");
 assert.equal(launcher.license, "SSPL-1.0");
-assert.equal(launcher.bin.nost, "bin/nostdb.js");
+assert.equal(launcher.bin.nostdb, "bin/nostdb.js");
 assert.deepEqual(launcher.repository, {
   type: "git",
   url: repositoryUrl,

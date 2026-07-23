@@ -1,7 +1,7 @@
 # Release-candidate tooling
 
 This directory builds and verifies candidate artifacts for the targets in
-`release-manifest.json`. The npm `0.0.1` packages assembled from this source
+`release-manifest.json`. The npm `0.0.2` packages assembled from this source
 were separately authorized and published; direct archives remain unpublished.
 Every archive requires target-native smoke evidence and includes the CLI,
 repository notices, a deterministic SPDX inventory, and third-party attribution

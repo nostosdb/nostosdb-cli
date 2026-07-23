@@ -154,14 +154,14 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "nostdb-catalog"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "nostdb-model",
 ]
 
 [[package]]
 name = "nostdb-cli"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "base64",
  "nostdb-client",
@@ -171,7 +171,7 @@ dependencies = [
 
 [[package]]
 name = "nostdb-client"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -179,7 +179,7 @@ dependencies = [
 
 [[package]]
 name = "nostdb-engine"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "blake3",
  "nostdb-catalog",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "nostdb-model"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "nostdb-parser",
  "nostdb-syntax",
@@ -201,14 +201,14 @@ dependencies = [
 
 [[package]]
 name = "nostdb-parser"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "nostdb-syntax",
 ]
 
 [[package]]
 name = "nostdb-query"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "nostdb-catalog",
  "nostdb-model",
@@ -217,7 +217,7 @@ dependencies = [
 
 [[package]]
 name = "nostdb-storage"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "fs2",
  "nostdb-catalog",
@@ -227,7 +227,7 @@ dependencies = [
 
 [[package]]
 name = "nostdb-sync"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "blake3",
  "nostdb-catalog",
@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "nostdb-syntax"
-version = "0.0.1"
+version = "0.0.2"
 
 [[package]]
 name = "pkg-config"

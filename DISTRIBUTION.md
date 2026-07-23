@@ -1,6 +1,6 @@
 # CLI distribution contract
 
-Status: npm `0.0.1` is published under `latest` and `next`; no supported binary,
+Status: npm `0.0.2` is published under `latest` and `next`; no supported binary,
 Homebrew formula, or direct archive is published.
 
 NostDB distributes one executable named `nostdb`. The Rust binary includes `nostdb-engine` and its Core dependencies at build time. Core is not a second user-installed package, daemon, or executable.
@@ -20,8 +20,8 @@ All channel artifacts originate from the same reviewed Git tag and release manif
 
 The candidate source is under [`npm/`](npm/) and [`distribution/`](distribution/). The checked-in tools cover all six declared native targets, require target-native smoke evidence, verify direct/npm/npx fixture equivalence, and retain the historical CLI-only Homebrew candidate test without publishing any channel. This repository contains no GitHub Actions, so operators must run those tools in separately controlled target-native environments and arrange any required attestation through an explicitly reviewed process. The public formula contract is the combined `nostdb` template in `nostdb-server`; the older local `nostdb.rb` template exists only for Stage 13 evidence and must not be published. Homebrew 6 local-path installation runs only in its developer verification mode with automatic updates disabled; it creates no tap and the operator removes the formula afterward.
 
-The published `@nostdb/server@0.0.1` global package belongs to the Server
-distribution and depends on this exact matching `@nostdb/cli@0.0.1` package. It
+The published `@nostdb/server@0.0.2` global package belongs to the Server
+distribution and depends on this exact matching `@nostdb/cli@0.0.2` package. It
 exposes both `nostd` and `nostdb`; this repository continues to own only the CLI
 launcher and `nostdb` platform packages. No `@nostdb/core` npm package is part
 of either installation.

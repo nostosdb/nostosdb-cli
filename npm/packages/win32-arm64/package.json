@@ -1,6 +1,6 @@
 {
   "name": "@nostdb/cli-win32-arm64",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "NostDB CLI for Windows ARM64",
   "license": "SSPL-1.0",
   "os": ["win32"],
