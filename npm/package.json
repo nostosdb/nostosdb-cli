@@ -17,6 +17,15 @@
   "engines": {
     "node": ">=18"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nostdb/nostdb-cli.git",
+    "directory": "npm"
+  },
+  "homepage": "https://github.com/nostdb/nostdb-cli#readme",
+  "bugs": {
+    "url": "https://github.com/nostdb/nostdb-cli/issues"
+  },
   "optionalDependencies": {
     "@nostdb/cli-darwin-arm64": "0.0.1",
     "@nostdb/cli-darwin-x64": "0.0.1",

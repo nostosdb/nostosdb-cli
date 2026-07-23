@@ -9,6 +9,9 @@ const { PLATFORM_PACKAGES } = require("../lib/platform.cjs");
 
 const root = path.resolve(__dirname, "..");
 const launcher = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+const repositoryUrl = "git+https://github.com/nostdb/nostdb-cli.git";
+const homepage = "https://github.com/nostdb/nostdb-cli#readme";
+const bugsUrl = "https://github.com/nostdb/nostdb-cli/issues";
 const expectedDirectories = Object.values(PLATFORM_PACKAGES)
   .map((name) => name.replace("@nostdb/cli-", ""))
   .sort();
@@ -22,6 +25,14 @@ assert.deepEqual(actualDirectories, expectedDirectories);
 assert.equal(launcher.name, "@nostdb/cli");
 assert.equal(launcher.license, "SSPL-1.0");
 assert.equal(launcher.bin.nostdb, "bin/nostdb.js");
+assert.deepEqual(launcher.repository, {
+  type: "git",
+  url: repositoryUrl,
+  directory: "npm",
+});
+assert.equal(launcher.homepage, homepage);
+assert.deepEqual(launcher.bugs, { url: bugsUrl });
+assert.equal(launcher.publishConfig.access, "public");
 assert.equal(launcher.scripts.preinstall, undefined);
 assert.equal(launcher.scripts.install, undefined);
 assert.equal(launcher.scripts.postinstall, undefined);
@@ -34,6 +45,14 @@ for (const directory of actualDirectories) {
   assert.equal(launcher.optionalDependencies[manifest.name], launcher.version);
   assert.equal(manifest.license, "SSPL-1.0");
   assert.equal(manifest.scripts, undefined);
+  assert.deepEqual(manifest.repository, {
+    type: "git",
+    url: repositoryUrl,
+    directory: `npm/packages/${directory}`,
+  });
+  assert.equal(manifest.homepage, homepage);
+  assert.deepEqual(manifest.bugs, { url: bugsUrl });
+  assert.equal(manifest.publishConfig.access, "public");
   assert.deepEqual(manifest.os, [directory.split("-")[0]]);
 }
 

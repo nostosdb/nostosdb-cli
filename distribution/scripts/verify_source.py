@@ -14,6 +14,22 @@ from common import (
 
 
 PACKAGE_VERSION = re.compile(r'^version = "([^"]+)"$', re.MULTILINE)
+REPOSITORY_URL = "git+https://github.com/nostdb/nostdb-cli.git"
+HOMEPAGE = "https://github.com/nostdb/nostdb-cli#readme"
+BUGS_URL = "https://github.com/nostdb/nostdb-cli/issues"
+
+
+def verify_npm_metadata(package: dict, directory: str) -> None:
+    if package.get("repository") != {
+        "type": "git",
+        "url": REPOSITORY_URL,
+        "directory": directory,
+    }:
+        raise CandidateError("invalid npm repository metadata for {}".format(directory))
+    if package.get("homepage") != HOMEPAGE:
+        raise CandidateError("invalid npm homepage metadata for {}".format(directory))
+    if package.get("bugs") != {"url": BUGS_URL}:
+        raise CandidateError("invalid npm bugs metadata for {}".format(directory))
 
 
 def main() -> int:
@@ -27,6 +43,7 @@ def main() -> int:
         launcher = json.loads((npm_root / "package.json").read_text(encoding="utf-8"))
         if launcher["version"] != manifest["version"]:
             raise CandidateError("npm launcher and distribution versions differ")
+        verify_npm_metadata(launcher, "npm")
         expected_packages = {
             details["npm_package"] for details in manifest["targets"].values()
         }
@@ -41,6 +58,7 @@ def main() -> int:
             )
             if package["name"] != package_name or package["version"] != manifest["version"]:
                 raise CandidateError("invalid platform package {}".format(package_name))
+            verify_npm_metadata(package, "npm/packages/{}".format(directory))
         forbidden = (
             "npm publish",
             "cargo publish",

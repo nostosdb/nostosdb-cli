@@ -6,5 +6,8 @@
   "os": ["win32"],
   "cpu": ["x64"],
   "files": ["bin/nostdb.exe", "LICENSE", "NOTICE", "README.md"],
+  "repository": {"type": "git", "url": "git+https://github.com/nostdb/nostdb-cli.git", "directory": "npm/packages/win32-x64"},
+  "homepage": "https://github.com/nostdb/nostdb-cli#readme",
+  "bugs": {"url": "https://github.com/nostdb/nostdb-cli/issues"},
   "publishConfig": {"access": "public"}
 }
