@@ -23,7 +23,7 @@ fn command() -> Command {
 #[test]
 fn one_shot_pipe_and_file_share_machine_readable_semantics() {
     let directory = temp_dir("inputs");
-    let database = directory.join("graph.nostdb");
+    let database = directory.join(".nostdb");
 
     let output = command()
         .args([
@@ -95,7 +95,75 @@ fn one_shot_pipe_and_file_share_machine_readable_semantics() {
 }
 
 #[test]
-fn invalid_inputs_and_owner_usage_do_not_create_a_database() {
+fn project_defaults_to_configured_ndb_only_database() {
+    let directory = temp_dir("ndb-only-default");
+    fs::write(
+        directory.join("nostdb.json"),
+        "{\n  \"nostdb\": 1,\n  \"root\": \".nostdb\",\n  \"nost\": false\n}\n",
+    )
+    .expect("configuration writes");
+
+    let sync = command()
+        .args([
+            "sync",
+            "--project",
+            directory.to_str().expect("UTF-8 path"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("default project sync runs");
+    assert!(
+        sync.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+    assert!(directory.join(".nostdb").is_file());
+    assert!(!directory.join("graph.nostdb").exists());
+    assert!(!directory.join(".nost").exists());
+
+    let query = command()
+        .args([
+            "query",
+            "CREATE (n {name: 'NDB only'})",
+            "--project",
+            directory.to_str().expect("UTF-8 path"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("configured project query runs");
+    assert!(
+        query.status.success(),
+        "{}",
+        String::from_utf8_lossy(&query.stderr)
+    );
+    assert!(!directory.join(".nost").exists());
+
+    let doctor = command()
+        .args([
+            "doctor",
+            "--project",
+            directory.to_str().expect("UTF-8 path"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("NDB-only doctor runs");
+    assert!(
+        doctor.status.success(),
+        "{}",
+        String::from_utf8_lossy(&doctor.stderr)
+    );
+    let status: serde_json::Value =
+        serde_json::from_slice(&doctor.stdout).expect("doctor output is JSON");
+    assert_eq!(status["rows"][0][3], "ndb_only");
+
+    fs::remove_dir_all(directory).expect("temporary directory removes");
+}
+
+#[test]
+fn invalid_inputs_and_removed_owner_option_are_preflighted() {
     let directory = temp_dir("preflight");
 
     let owner_database = directory.join("owner.nostdb");
@@ -111,7 +179,7 @@ fn invalid_inputs_and_owner_usage_do_not_create_a_database() {
         .output()
         .expect("invalid owner invocation runs");
     assert_eq!(owner.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&owner.stderr).contains("--owner requires --project"));
+    assert!(String::from_utf8_lossy(&owner.stderr).contains("unknown option `--owner`"));
     assert!(!owner_database.exists());
 
     let read_only_database = directory.join("read-only.nostdb");
@@ -137,12 +205,12 @@ fn invalid_inputs_and_owner_usage_do_not_create_a_database() {
     fs::create_dir(&source_project).expect("source project creates");
     fs::write(
         source_project.join("nostdb.json"),
-        "{\"config_version\":2,\"language_version\":1,\"source\":{\"layout\":\"colocated\",\"entry\":\"main.nost\"},\"modules\":{\"main.nost\":\"11111111-1111-1111-1111-111111111111\"}}\n",
+        "{\"nostdb\":1,\"root\":\".nostdb\",\"nost\":true,\"modules\":{\"main.nost\":\"11111111-1111-1111-1111-111111111111\"}}\n",
     )
     .expect("source configuration writes");
     fs::write(source_project.join("main.nost"), "node existing {}\n").expect("source writes");
-    let source_database = source_project.join("graph.nostdb");
-    let missing_owner = command()
+    let source_database = source_project.join(".nostdb");
+    let direct_project_write = command()
         .args([
             "query",
             "CREATE (n {name: 'should-not-exist'})",
@@ -152,31 +220,19 @@ fn invalid_inputs_and_owner_usage_do_not_create_a_database() {
             source_database.to_str().expect("UTF-8 path"),
         ])
         .output()
-        .expect("Source Mode missing-owner invocation runs");
-    assert_eq!(missing_owner.status.code(), Some(2));
+        .expect("NDB-first project write runs");
     assert!(
-        !source_database.exists(),
-        "owner validation must precede sync"
+        direct_project_write.status.success(),
+        "{}",
+        String::from_utf8_lossy(&direct_project_write.stderr)
     );
-
-    let source_read_only = command()
-        .args([
-            "query",
-            "CREATE (n {name: 'should-not-exist'})",
-            "--project",
-            source_project.to_str().expect("UTF-8 path"),
-            "--database",
-            source_database.to_str().expect("UTF-8 path"),
-            "--owner",
-            "11111111-1111-1111-1111-111111111111",
-            "--read-only",
-        ])
-        .output()
-        .expect("Source Mode read-only mutation invocation runs");
-    assert_eq!(source_read_only.status.code(), Some(4));
+    assert!(source_database.is_file());
     assert!(
-        !source_database.exists(),
-        "query rejection must precede sync"
+        fs::read_to_string(
+            source_project.join(".nost/modules/ffffffff-ffff-ffff-ffff-ffffffffffff.nost"),
+        )
+        .expect("source reads")
+        .contains("should-not-exist")
     );
 
     let missing_database = directory.join("missing.nostdb");
@@ -224,7 +280,7 @@ fn invalid_inputs_and_owner_usage_do_not_create_a_database() {
 #[test]
 fn multi_statement_machine_output_is_framed_or_rejected_before_open() {
     let directory = temp_dir("multi-output");
-    let database = directory.join("graph.nostdb");
+    let database = directory.join(".nostdb");
     let json = command()
         .args([
             "query",
@@ -270,7 +326,7 @@ fn multi_statement_machine_output_is_framed_or_rejected_before_open() {
 #[test]
 fn repl_supports_multiline_and_atomic_transactions_without_stdout_prompts() {
     let directory = temp_dir("repl");
-    let database = directory.join("graph.nostdb");
+    let database = directory.join(".nostdb");
     let mut child = command()
         .args([
             "query",
@@ -325,7 +381,7 @@ fn repl_supports_multiline_and_atomic_transactions_without_stdout_prompts() {
 #[test]
 fn repl_continues_after_recoverable_meta_command_errors() {
     let directory = temp_dir("repl-recovery");
-    let database = directory.join("graph.nostdb");
+    let database = directory.join(".nostdb");
     let mut child = command()
         .args([
             "query",
@@ -366,7 +422,7 @@ fn stable_exit_codes_distinguish_usage_and_query_errors() {
     assert_eq!(usage.status.code(), Some(2));
 
     let directory = temp_dir("errors");
-    let database = directory.join("graph.nostdb");
+    let database = directory.join(".nostdb");
     let query = command()
         .args([
             "query",
@@ -491,11 +547,11 @@ fn source_failures_report_file_range_code_severity_and_message() {
     const OWNER: &str = "11111111-1111-1111-1111-111111111111";
     let directory = temp_dir("diagnostics");
     let source = directory.join("main.nost");
-    let database = directory.join("graph.nostdb");
+    let database = directory.join(".nostdb");
     fs::write(
         directory.join("nostdb.json"),
         format!(
-            "{{\"config_version\":2,\"language_version\":1,\"source\":{{\"layout\":\"colocated\",\"entry\":\"main.nost\"}},\"modules\":{{\"main.nost\":\"{OWNER}\"}}}}\n"
+            "{{\"nostdb\":1,\"root\":\".nostdb\",\"nost\":true,\"modules\":{{\"main.nost\":\"{OWNER}\"}}}}\n"
         ),
     )
     .expect("configuration writes");
@@ -556,11 +612,11 @@ fn automatic_source_sync_reports_warnings_only_on_stderr() {
     const MAIN: &str = "11111111-1111-1111-1111-111111111111";
     const PEOPLE: &str = "22222222-2222-2222-2222-222222222222";
     let directory = temp_dir("sync-warnings");
-    let database = directory.join("graph.nostdb");
+    let database = directory.join(".nostdb");
     fs::write(
         directory.join("nostdb.json"),
         format!(
-            "{{\"config_version\":2,\"language_version\":1,\"source\":{{\"layout\":\"colocated\",\"entry\":\"main.nost\"}},\"modules\":{{\"main.nost\":\"{MAIN}\",\"people.nost\":\"{PEOPLE}\"}}}}\n"
+            "{{\"nostdb\":1,\"root\":\".nostdb\",\"nost\":true,\"include\":[\"main.nost\"],\"modules\":{{\"main.nost\":\"{MAIN}\",\"people.nost\":\"{PEOPLE}\"}}}}\n"
         ),
     )
     .expect("configuration writes");
@@ -604,11 +660,11 @@ fn automatic_source_sync_reports_warnings_only_on_stderr() {
 fn edge_json_includes_stable_direction_kind_vocabulary() {
     const OWNER: &str = "11111111-1111-1111-1111-111111111111";
     let directory = temp_dir("edge-kind");
-    let database = directory.join("graph.nostdb");
+    let database = directory.join(".nostdb");
     fs::write(
         directory.join("nostdb.json"),
         format!(
-            "{{\"config_version\":2,\"language_version\":1,\"source\":{{\"layout\":\"colocated\",\"entry\":\"main.nost\"}},\"modules\":{{\"main.nost\":\"{OWNER}\"}}}}\n"
+            "{{\"nostdb\":1,\"root\":\".nostdb\",\"nost\":true,\"modules\":{{\"main.nost\":\"{OWNER}\"}}}}\n"
         ),
     )
     .expect("configuration writes");
@@ -670,14 +726,14 @@ fn edge_json_includes_stable_direction_kind_vocabulary() {
 }
 
 #[test]
-fn doctor_rejects_source_drift_and_unrelated_databases() {
+fn doctor_rejects_source_drift_and_mismatched_configured_database() {
     const OWNER: &str = "11111111-1111-1111-1111-111111111111";
     let directory = temp_dir("doctor-drift");
-    let database = directory.join("graph.nostdb");
+    let database = directory.join(".nostdb");
     fs::write(
         directory.join("nostdb.json"),
         format!(
-            "{{\"config_version\":2,\"language_version\":1,\"source\":{{\"layout\":\"colocated\",\"entry\":\"main.nost\"}},\"modules\":{{\"main.nost\":\"{OWNER}\"}}}}\n"
+            "{{\"nostdb\":1,\"root\":\".nostdb\",\"nost\":true,\"modules\":{{\"main.nost\":\"{OWNER}\"}}}}\n"
         ),
     )
     .expect("configuration writes");
@@ -749,11 +805,11 @@ fn doctor_rejects_source_drift_and_unrelated_databases() {
         ])
         .output()
         .expect("unrelated doctor runs");
-    assert_eq!(unrelated_status.status.code(), Some(5));
-    let status: serde_json::Value = serde_json::from_slice(&unrelated_status.stdout)
-        .expect("unrelated status remains machine-readable");
-    assert_eq!(status["rows"][0][2], false);
-    assert_eq!(status["rows"][0][3], "not_source_managed");
+    assert_eq!(unrelated_status.status.code(), Some(3));
+    assert!(unrelated_status.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&unrelated_status.stderr).contains("does not match nostdb.json")
+    );
 
     fs::remove_dir_all(directory).expect("temporary directory removes");
 }
@@ -762,11 +818,11 @@ fn doctor_rejects_source_drift_and_unrelated_databases() {
 fn source_sync_write_and_administration_use_the_engine_facade() {
     const OWNER: &str = "11111111-1111-1111-1111-111111111111";
     let directory = temp_dir("source");
-    let database = directory.join("graph.nostdb");
+    let database = directory.join(".nostdb");
     fs::write(
         directory.join("nostdb.json"),
         format!(
-            "{{\"config_version\":2,\"language_version\":1,\"source\":{{\"layout\":\"colocated\",\"entry\":\"main.nost\"}},\"modules\":{{\"main.nost\":\"{OWNER}\"}}}}\n"
+            "{{\"nostdb\":1,\"root\":\".nostdb\",\"nost\":true,\"modules\":{{\"main.nost\":\"{OWNER}\"}}}}\n"
         ),
     )
     .expect("configuration writes");
@@ -875,8 +931,6 @@ fn source_sync_write_and_administration_use_the_engine_facade() {
             directory.to_str().expect("UTF-8 path"),
             "--database",
             database.to_str().expect("UTF-8 path"),
-            "--owner",
-            OWNER,
             "--format",
             "json",
         ])
@@ -892,9 +946,9 @@ fn source_sync_write_and_administration_use_the_engine_facade() {
         "{\"columns\":[\"age\"],\"rows\":[[31]]}\n"
     );
     assert!(
-        fs::read_to_string(directory.join("main.nost"))
+        fs::read_to_string(directory.join(".nost/graph.nost"))
             .expect("source reads")
-            .contains("age: 31")
+            .contains("`age`: 31")
     );
 
     fs::remove_dir_all(directory).expect("temporary directory removes");

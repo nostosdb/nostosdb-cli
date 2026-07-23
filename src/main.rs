@@ -3,7 +3,7 @@
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, IsTerminal, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -14,10 +14,10 @@ use nostdb_client::{
     ServerResponse,
 };
 use nostdb_engine::{
-    CompileError, DatabaseError, Digest, EdgeKind, EmbeddedDatabase, Parameters, ProjectCompiler,
-    ProjectConfig, ProjectDiagnostic, QueryResult, QueryValue, SchemaInfo, SourceWriteOptions,
-    SourceWriter, StableModuleId, StatementResult, SyncError, Synchronizer, UnresolvedInfo,
-    WriteResult, format_source, prepare, prepare_write,
+    CompileError, DatabaseError, EdgeKind, EmbeddedDatabase, NOSTDB_VERSION, Parameters,
+    ProjectCompiler, ProjectConfig, ProjectDiagnostic, ProjectSyncDirection, ProjectSyncError,
+    ProjectSyncReport, ProjectSynchronizer, QueryResult, QueryValue, SchemaInfo, StatementResult,
+    UnresolvedInfo, WriteResult, format_source, prepare, prepare_write,
 };
 
 const EXIT_SUCCESS: u8 = 0;
@@ -35,8 +35,7 @@ const HELP: &str = "NostDB command-line client
 Usage:
     nostdb query [QUERY] [--file PATH] [--database PATH|NAME] [--project PATH]
                  [--server nostdb://HOST:PORT] [--credential-file PATH]
-                 [--owner MODULE_ID] [--format table|json|jsonl|csv]
-                 [--read-only] [--interactive]
+                 [--format table|json|jsonl|csv] [--read-only] [--interactive]
     nostdb server ping --server nostdb://HOST:PORT [--credential-file PATH]
     nostdb database create NAME|list|inspect NAME|rename NAME NEW_NAME
                     |drop NAME --confirm NAME|snapshot NAME --output PATH
@@ -44,12 +43,12 @@ Usage:
                     |import-logical NAME --file PATH
                     --server nostdb://HOST:PORT [--credential-file PATH]
                     [--format table|json|jsonl|csv]
-    nostdb sync --project PATH --database PATH [--format table|json|jsonl|csv]
-    nostdb format --file PATH [--project PATH | --language-version VERSION] [--check]
+    nostdb sync --project PATH [--database PATH] [--format table|json|jsonl|csv]
+    nostdb format --file PATH [--project PATH | --nostdb-version VERSION] [--check]
     nostdb check|inspect|stats|schema|unresolved --database PATH
                  [--format table|json|jsonl|csv]
     nostdb imports|warnings --project PATH [--format table|json|jsonl|csv]
-    nostdb doctor --project PATH --database PATH [--format table|json|jsonl|csv]
+    nostdb doctor --project PATH [--database PATH] [--format table|json|jsonl|csv]
     nostdb --help
     nostdb --version
 
@@ -109,6 +108,7 @@ impl CliError {
 #[derive(Debug)]
 struct CommonOptions {
     database: PathBuf,
+    database_explicit: bool,
     project: Option<PathBuf>,
     format: OutputFormat,
 }
@@ -118,7 +118,6 @@ struct QueryOptions {
     common: CommonOptions,
     query: Option<String>,
     file: Option<PathBuf>,
-    owner: Option<String>,
     read_only: bool,
     interactive: bool,
     remote: Option<RemoteOptions>,
@@ -154,7 +153,7 @@ struct DatabaseOptions {
 struct FormatOptions {
     file: PathBuf,
     project: Option<PathBuf>,
-    language_version: Option<u32>,
+    nostdb_version: Option<u32>,
     check: bool,
 }
 
@@ -215,43 +214,53 @@ fn run() -> Result<(), CliError> {
 fn command_help(command: &str) -> Result<String, CliError> {
     let usage = match command {
         "query" => format!(
-            "Usage: nostdb query [QUERY] [--file PATH] [--database PATH|NAME] [--project PATH]\n       [--server nostdb://HOST:PORT] [--credential-file PATH]\n       [--owner MODULE_ID] [--format {MACHINE_FORMATS}] [--read-only] [--interactive]\n\n--owner requires --project. --read-only rejects every mutating statement before execution. Use jsonl for streaming output; multi-statement json is one array and multi-statement csv is rejected."
+            "Usage: nostdb query [QUERY] [--file PATH] [--database PATH|NAME] [--project PATH]\n       [--server nostdb://HOST:PORT] [--credential-file PATH]\n       [--format {MACHINE_FORMATS}] [--read-only] [--interactive]\n\nProject queries use the project-local .nostdb root declared by nostdb.json. --read-only rejects every mutating statement before execution. Use jsonl for streaming output; multi-statement json is one array and multi-statement csv is rejected."
         ),
-        "server" => "Usage: nostdb server ping --server nostdb://HOST:PORT [--credential-file PATH]".to_owned(),
+        "server" => {
+            "Usage: nostdb server ping --server nostdb://HOST:PORT [--credential-file PATH]"
+                .to_owned()
+        }
         "database" => format!(
             "Usage: nostdb database create NAME|list|inspect NAME|rename NAME NEW_NAME\n       |drop NAME --confirm NAME|snapshot NAME --output PATH\n       |restore NAME --file PATH|export-logical NAME --output PATH\n       |import-logical NAME --file PATH\n       --server nostdb://HOST:PORT [--credential-file PATH] [--format {MACHINE_FORMATS}]"
         ),
         "sync" => format!(
-            "Usage: nostdb sync --project PATH --database PATH [--format {MACHINE_FORMATS}]"
+            "Usage: nostdb sync --project PATH [--database PATH] [--format {MACHINE_FORMATS}]"
         ),
-        "format" => "Usage: nostdb format --file PATH [--project PATH | --language-version VERSION] [--check]".to_owned(),
-        "check" | "inspect" | "stats" | "schema" | "unresolved" => format!(
-            "Usage: nostdb {command} --database PATH [--format {MACHINE_FORMATS}]"
-        ),
-        "imports" | "warnings" => format!(
-            "Usage: nostdb {command} --project PATH [--format {MACHINE_FORMATS}]"
-        ),
+        "format" => {
+            "Usage: nostdb format --file PATH [--project PATH | --nostdb-version VERSION] [--check]"
+                .to_owned()
+        }
+        "check" | "inspect" | "stats" | "schema" | "unresolved" => {
+            format!("Usage: nostdb {command} --database PATH [--format {MACHINE_FORMATS}]")
+        }
+        "imports" | "warnings" => {
+            format!("Usage: nostdb {command} --project PATH [--format {MACHINE_FORMATS}]")
+        }
         "doctor" => format!(
-            "Usage: nostdb doctor --project PATH --database PATH [--format {MACHINE_FORMATS}]"
+            "Usage: nostdb doctor --project PATH [--database PATH] [--format {MACHINE_FORMATS}]"
         ),
-        _ => return Err(CliError::usage(format!("unknown command `{command}`\n\n{HELP}"))),
+        _ => {
+            return Err(CliError::usage(format!(
+                "unknown command `{command}`\n\n{HELP}"
+            )));
+        }
     };
     Ok(usage)
 }
 
 fn parse_format(arguments: Vec<String>) -> Result<FormatOptions, CliError> {
     let mut file = None;
-    let mut project = None;
-    let mut language_version = None;
+    let mut project: Option<PathBuf> = None;
+    let mut nostdb_version = None;
     let mut check = false;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
             "-f" | "--file" => file = Some(value(&arguments, &mut index)?.into()),
             "-p" | "--project" => project = Some(value(&arguments, &mut index)?.into()),
-            "--language-version" => {
-                language_version = Some(value(&arguments, &mut index)?.parse().map_err(|_| {
-                    CliError::usage("--language-version must be an unsigned integer")
+            "--nostdb-version" => {
+                nostdb_version = Some(value(&arguments, &mut index)?.parse().map_err(|_| {
+                    CliError::usage("--nostdb-version must be an unsigned integer")
                 })?);
             }
             "--check" => check = true,
@@ -259,15 +268,15 @@ fn parse_format(arguments: Vec<String>) -> Result<FormatOptions, CliError> {
         }
         index += 1;
     }
-    if project.is_some() && language_version.is_some() {
+    if project.is_some() && nostdb_version.is_some() {
         return Err(CliError::usage(
-            "--project and --language-version are mutually exclusive",
+            "--project and --nostdb-version are mutually exclusive",
         ));
     }
     Ok(FormatOptions {
         file: file.ok_or_else(|| CliError::usage("--file is required"))?,
         project,
-        language_version,
+        nostdb_version,
         check,
     })
 }
@@ -297,7 +306,6 @@ fn parse_query(arguments: Vec<String>) -> Result<QueryOptions, CliError> {
     let mut format = OutputFormat::Table;
     let mut query = None;
     let mut file = None;
-    let mut owner = None;
     let mut read_only = false;
     let mut interactive = false;
     let mut server = None;
@@ -313,7 +321,6 @@ fn parse_query(arguments: Vec<String>) -> Result<QueryOptions, CliError> {
             "--server" => server = Some(value(&arguments, &mut index)?.to_owned()),
             "--credential-file" => credential_file = Some(value(&arguments, &mut index)?.into()),
             "-f" | "--file" => file = Some(value(&arguments, &mut index)?.into()),
-            "--owner" => owner = Some(value(&arguments, &mut index)?.to_owned()),
             "--format" => format = OutputFormat::parse(value(&arguments, &mut index)?)?,
             "--read-only" => read_only = true,
             "--interactive" => interactive = true,
@@ -340,40 +347,31 @@ fn parse_query(arguments: Vec<String>) -> Result<QueryOptions, CliError> {
             "--interactive cannot be combined with QUERY or --file",
         ));
     }
-    if owner.is_some() && project.is_none() {
-        return Err(CliError::usage("--owner requires --project PATH"));
-    }
-    if let Some(owner) = owner.as_deref() {
-        owner
-            .parse::<StableModuleId>()
-            .map_err(|error| CliError::usage(format!("invalid --owner: {error}")))?;
-    }
     if server.is_some() && !database_explicit {
         return Err(CliError::usage("remote query requires --database NAME"));
     }
-    if server.is_some() && (project.is_some() || owner.is_some()) {
+    if server.is_some() && project.is_some() {
         return Err(CliError::usage(
-            "remote query cannot use --project or --owner; import through the server lifecycle",
+            "remote query cannot use --project; import through the server lifecycle",
         ));
     }
     if server.is_none() && credential_file.is_some() {
         return Err(CliError::usage("--credential-file requires --server"));
     }
     let database = database.unwrap_or_else(|| {
-        project.as_ref().map_or_else(
-            || PathBuf::from("graph.nostdb"),
-            |root| root.join("graph.nostdb"),
-        )
+        project
+            .as_ref()
+            .map_or_else(|| PathBuf::from(".nostdb"), |root| root.join(".nostdb"))
     });
     Ok(QueryOptions {
         common: CommonOptions {
             database,
+            database_explicit,
             project,
             format,
         },
         query,
         file,
-        owner,
         read_only,
         interactive,
         remote: server.map(|server| RemoteOptions {
@@ -554,12 +552,16 @@ fn parse_database(mut arguments: Vec<String>) -> Result<DatabaseOptions, CliErro
 
 fn parse_common(arguments: Vec<String>, project_required: bool) -> Result<CommonOptions, CliError> {
     let mut database = None;
-    let mut project = None;
+    let mut database_explicit = false;
+    let mut project: Option<PathBuf> = None;
     let mut format = OutputFormat::Table;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
-            "-d" | "--database" => database = Some(value(&arguments, &mut index)?.into()),
+            "-d" | "--database" => {
+                database = Some(value(&arguments, &mut index)?.into());
+                database_explicit = true;
+            }
             "-p" | "--project" => project = Some(value(&arguments, &mut index)?.into()),
             "--format" => format = OutputFormat::parse(value(&arguments, &mut index)?)?,
             option => return Err(CliError::usage(format!("unknown option `{option}`"))),
@@ -569,12 +571,60 @@ fn parse_common(arguments: Vec<String>, project_required: bool) -> Result<Common
     if project_required && project.is_none() {
         return Err(CliError::usage("--project is required"));
     }
-    let database = database.ok_or_else(|| CliError::usage("--database is required"))?;
+    let database = database
+        .or_else(|| project.as_ref().map(|project| project.join(".nostdb")))
+        .ok_or_else(|| CliError::usage("--database is required"))?;
     Ok(CommonOptions {
         database,
+        database_explicit,
         project,
         format,
     })
+}
+
+fn resolve_project_database(options: &mut CommonOptions) -> Result<(), CliError> {
+    let Some(project) = options.project.as_deref() else {
+        return Ok(());
+    };
+    let config =
+        ProjectConfig::load(project).map_err(|error| CliError::project(error.to_string()))?;
+    let configured = config.root_path();
+    if options.database_explicit
+        && lexical_absolute(&options.database)? != lexical_absolute(&configured)?
+    {
+        return Err(CliError::project(format!(
+            "--database {} does not match nostdb.json root {}",
+            options.database.display(),
+            configured.display()
+        )));
+    }
+    options.database = configured;
+    Ok(())
+}
+
+fn lexical_absolute(path: &Path) -> Result<PathBuf, CliError> {
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir()
+            .map_err(|error| {
+                CliError::new(EXIT_IO, format!("cannot read current directory: {error}"))
+            })?
+            .join(path)
+    };
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    Ok(normalized)
 }
 
 fn value<'a>(arguments: &'a [String], index: &mut usize) -> Result<&'a str, CliError> {
@@ -585,22 +635,36 @@ fn value<'a>(arguments: &'a [String], index: &mut usize) -> Result<&'a str, CliE
         .ok_or_else(|| CliError::usage("option requires a value"))
 }
 
-fn run_query(options: QueryOptions) -> Result<(), CliError> {
+fn run_query(mut options: QueryOptions) -> Result<(), CliError> {
     if options.remote.is_some() {
         return run_remote_query(options);
     }
+    resolve_project_database(&mut options.common)?;
     let interactive = options.interactive
         || (options.query.is_none() && options.file.is_none() && io::stdin().is_terminal());
     if interactive {
         synchronize_for_query(&options)?;
         let mut database = Some(open_or_create(&options.common.database)?);
-        return repl(options, &mut database);
+        repl(&options, &mut database)?;
+        if !options.read_only {
+            database
+                .as_mut()
+                .expect("interactive query keeps the database open")
+                .checkpoint()
+                .map_err(CliError::database)?;
+            drop(database);
+            synchronize_for_query(&options)?;
+        }
+        return Ok(());
     }
 
     // Input and query preparation intentionally precede synchronization and
     // database creation, so a typo or unreadable file cannot leave an artifact.
     let statements = read_and_validate_statements(&options)?;
     validate_batch_format(options.common.format, statements.len())?;
+    let has_write = statements
+        .iter()
+        .any(|statement| prepare_write(statement).is_ok());
     synchronize_for_query(&options)?;
     let mut database = Some(open_or_create(&options.common.database)?);
     let mut results = Vec::with_capacity(statements.len());
@@ -608,15 +672,18 @@ fn run_query(options: QueryOptions) -> Result<(), CliError> {
         let result = execute_one(&options, &mut database, &statement)?;
         results.push(result);
     }
-    render_statement_batch(&results, options.common.format, &mut io::stdout())?;
-    if options.read_only {
-        return Ok(());
+    if !options.read_only {
+        database
+            .as_mut()
+            .expect("query execution keeps the database open")
+            .checkpoint()
+            .map_err(CliError::database)?;
     }
-    database
-        .as_mut()
-        .expect("query execution keeps the database open")
-        .checkpoint()
-        .map_err(CliError::database)
+    drop(database);
+    if has_write {
+        synchronize_for_query(&options)?;
+    }
+    render_statement_batch(&results, options.common.format, &mut io::stdout())
 }
 
 fn run_remote_query(options: QueryOptions) -> Result<(), CliError> {
@@ -691,35 +758,7 @@ fn read_and_validate_statements(options: &QueryOptions) -> Result<Vec<String>, C
     for (index, statement) in statements.iter().enumerate() {
         validate_statement(statement, options.read_only, index, statements.len())?;
     }
-    preflight_source_owner(options, &statements)?;
     Ok(statements)
-}
-
-fn preflight_source_owner(options: &QueryOptions, statements: &[String]) -> Result<(), CliError> {
-    let Some(project) = options.common.project.as_deref() else {
-        return Ok(());
-    };
-    if !statements
-        .iter()
-        .any(|statement| prepare_write(statement).is_ok())
-    {
-        return Ok(());
-    }
-    let owner_text = options
-        .owner
-        .as_deref()
-        .ok_or_else(|| CliError::usage("Source Mode writes require --owner MODULE_ID"))?;
-    let owner = owner_text
-        .parse::<StableModuleId>()
-        .map_err(|error| CliError::usage(format!("invalid --owner: {error}")))?;
-    let config =
-        ProjectConfig::load(project).map_err(|error| CliError::project(error.to_string()))?;
-    if !config.modules.values().any(|module_id| *module_id == owner) {
-        return Err(CliError::project(
-            "--owner is not mapped by the project's nostdb.json",
-        ));
-    }
-    Ok(())
 }
 
 fn validate_statement(
@@ -764,7 +803,7 @@ fn validate_batch_format(format: OutputFormat, statement_count: usize) -> Result
 
 fn synchronize_for_query(options: &QueryOptions) -> Result<(), CliError> {
     if let Some(project) = &options.common.project {
-        let report = synchronize(project, &options.common.database)?;
+        let report = synchronize(project)?;
         emit_project_diagnostics(&report.diagnostics);
     }
     Ok(())
@@ -1065,95 +1104,11 @@ fn execute_one(
 ) -> Result<StatementResult, CliError> {
     validate_statement(statement, options.read_only, 0, 1)?;
     let parameters = Parameters::new();
-    if prepare(statement).is_ok() {
-        return database
-            .as_mut()
-            .expect("query execution keeps the database open")
-            .execute(statement, &parameters)
-            .map_err(CliError::database);
-    }
-    if prepare_write(statement).is_ok() {
-        if let Some(project) = &options.common.project {
-            let owner_text = options
-                .owner
-                .as_ref()
-                .ok_or_else(|| CliError::usage("Source Mode writes require --owner MODULE_ID"))?;
-            let config = ProjectConfig::load(project)
-                .map_err(|error| CliError::project(error.to_string()))?;
-            let owner_module = owner_text
-                .parse()
-                .map_err(|error| CliError::usage(format!("invalid --owner: {error}")))?;
-            let relative = config
-                .modules
-                .iter()
-                .find_map(|(path, id)| (*id == owner_module).then_some(path))
-                .ok_or_else(|| CliError::project("--owner is not mapped by nostdb.json"))?;
-            let bytes = fs::read(project.join(relative)).map_err(|error| {
-                CliError::new(
-                    EXIT_IO,
-                    format!("cannot read {}: {error}", relative.display()),
-                )
-            })?;
-            let mut writer = SourceWriter::default();
-            let mut open = database
-                .take()
-                .expect("query execution keeps the database open");
-            open.checkpoint().map_err(CliError::database)?;
-            drop(open);
-            let result = writer
-                .execute(
-                    project,
-                    &options.common.database,
-                    statement,
-                    &parameters,
-                    SourceWriteOptions {
-                        owner_module,
-                        expected_hash: Digest::of_bytes(&bytes),
-                    },
-                )
-                .map(|report| {
-                    emit_project_diagnostics(&report.sync.diagnostics);
-                    StatementResult::Write(report.write)
-                })
-                .map_err(map_source_write);
-            *database =
-                Some(EmbeddedDatabase::open(&options.common.database).map_err(CliError::database)?);
-            return result;
-        }
-    }
     database
         .as_mut()
         .expect("query execution keeps the database open")
         .execute(statement, &parameters)
         .map_err(CliError::database)
-}
-
-fn map_source_write(error: nostdb_engine::SourceWriteError) -> CliError {
-    use nostdb_engine::SourceWriteError;
-    let code = match &error {
-        SourceWriteError::Conflict { .. }
-        | SourceWriteError::ConfigChanged
-        | SourceWriteError::ProjectChanged(_) => EXIT_CONFLICT,
-        SourceWriteError::Config(_) | SourceWriteError::Compile(_) => EXIT_PROJECT,
-        SourceWriteError::Query(_) => EXIT_QUERY,
-        SourceWriteError::Storage(_) | SourceWriteError::StaleDatabase => EXIT_DATABASE,
-        SourceWriteError::Io(_)
-        | SourceWriteError::SyncAfterSourceChange(_)
-        | SourceWriteError::DurabilityAfterSourceChange(_) => EXIT_IO,
-        SourceWriteError::ReadOnlyModule(_)
-        | SourceWriteError::UnknownOwner(_)
-        | SourceWriteError::Unsupported(_)
-        | SourceWriteError::Format(_) => EXIT_QUERY,
-    };
-    let message = match &error {
-        SourceWriteError::Compile(error) => compile_error_message(error),
-        SourceWriteError::SyncAfterSourceChange(error) => format!(
-            "source changed successfully but synchronization failed: {}",
-            sync_error_message(error)
-        ),
-        _ => error.to_string(),
-    };
-    CliError::new(code, message)
 }
 
 fn open_or_create(path: &Path) -> Result<EmbeddedDatabase, CliError> {
@@ -1175,16 +1130,25 @@ fn open_or_create(path: &Path) -> Result<EmbeddedDatabase, CliError> {
     }
 }
 
-fn synchronize(project: &Path, database: &Path) -> Result<nostdb_engine::SyncReport, CliError> {
-    Synchronizer::default()
-        .sync(project, database)
-        .map_err(|error| CliError::project(sync_error_message(&error)))
+fn synchronize(project: &Path) -> Result<ProjectSyncReport, CliError> {
+    ProjectSynchronizer::default()
+        .sync(project)
+        .map_err(map_project_sync)
 }
 
-fn sync_error_message(error: &SyncError) -> String {
-    match error {
-        SyncError::Compile(error) => compile_error_message(error),
-        _ => error.to_string(),
+fn map_project_sync(error: ProjectSyncError) -> CliError {
+    match &error {
+        ProjectSyncError::Source(nostdb_engine::SyncError::Compile(error)) => {
+            CliError::project(compile_error_message(error))
+        }
+        ProjectSyncError::Config(_) | ProjectSyncError::Source(_) => {
+            CliError::project(error.to_string())
+        }
+        ProjectSyncError::Database(_) | ProjectSyncError::Export(_) => {
+            CliError::new(EXIT_DATABASE, error.to_string())
+        }
+        ProjectSyncError::Conflict { .. } => CliError::new(EXIT_CONFLICT, error.to_string()),
+        ProjectSyncError::Io(_) => CliError::new(EXIT_IO, error.to_string()),
     }
 }
 
@@ -1238,7 +1202,7 @@ fn emit_project_diagnostics(diagnostics: &[ProjectDiagnostic]) {
 
 fn diagnose_source_for_format(
     source: &[u8],
-    language_version: u32,
+    nostdb_version: u32,
 ) -> Option<Vec<ProjectDiagnostic>> {
     let sequence = FORMAT_DIAGNOSTIC_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let directory = env::temp_dir().join(format!(
@@ -1251,7 +1215,7 @@ fn diagnose_source_for_format(
     let config_path = directory.join("nostdb.json");
     let source_path = directory.join("main.nost");
     let config = format!(
-        "{{\"config_version\":2,\"language_version\":{language_version},\"source\":{{\"layout\":\"single\",\"entry\":\"main.nost\"}},\"modules\":{{\"main.nost\":\"00000000-0000-0000-0000-000000000001\"}}}}\n"
+        "{{\"nostdb\":{nostdb_version},\"root\":\".nostdb\",\"nost\":true,\"modules\":{{\"main.nost\":\"00000000-0000-0000-0000-000000000001\"}}}}\n"
     );
     let setup = fs::write(&config_path, config).and_then(|()| fs::write(&source_path, source));
     let result = if setup.is_ok() {
@@ -1272,23 +1236,46 @@ fn diagnose_source_for_format(
     }
 }
 
-fn run_sync(options: CommonOptions) -> Result<(), CliError> {
-    let report = synchronize(
-        options.project.as_deref().expect("required by parser"),
-        &options.database,
-    )?;
+fn run_sync(mut options: CommonOptions) -> Result<(), CliError> {
+    resolve_project_database(&mut options)?;
+    let report = synchronize(options.project.as_deref().expect("required by parser"))?;
     emit_project_diagnostics(&report.diagnostics);
+    let source_updated = match report.source_updated_at_unix_ms {
+        Some(value) => integer(value)?,
+        None => QueryValue::Null,
+    };
     let rows = vec![vec![
-        QueryValue::String(report.semantic_hash.to_string()),
+        QueryValue::String(sync_direction(report.direction).to_owned()),
+        QueryValue::String(report.database_path.display().to_string()),
+        integer(report.database_generation)?,
+        integer(report.database_updated_at_unix_ms)?,
+        source_updated,
         QueryValue::Integer(i64::from(report.attempts)),
         QueryValue::Integer(report.diagnostics.len() as i64),
     ]];
     render_table_data(
-        &["semantic_hash", "attempts", "warnings"],
+        &[
+            "direction",
+            "database",
+            "database_generation",
+            "database_updated_at_unix_ms",
+            "source_updated_at_unix_ms",
+            "attempts",
+            "warnings",
+        ],
         &rows,
         options.format,
         &mut io::stdout(),
     )
+}
+
+fn sync_direction(direction: ProjectSyncDirection) -> &'static str {
+    match direction {
+        ProjectSyncDirection::None => "none",
+        ProjectSyncDirection::DatabaseToSource => "database_to_source",
+        ProjectSyncDirection::SourceToDatabase => "source_to_database",
+        ProjectSyncDirection::SourcesRemoved => "sources_removed",
+    }
 }
 
 fn run_format(options: FormatOptions) -> Result<(), CliError> {
@@ -1298,15 +1285,15 @@ fn run_format(options: FormatOptions) -> Result<(), CliError> {
             format!("cannot read {}: {error}", options.file.display()),
         )
     })?;
-    let language_version = if let Some(project) = options.project {
+    let nostdb_version = if let Some(project) = options.project {
         ProjectConfig::load(project)
             .map_err(|error| CliError::project(error.to_string()))?
-            .language_version
+            .nostdb_version
     } else {
-        options.language_version.unwrap_or(1)
+        options.nostdb_version.unwrap_or(NOSTDB_VERSION)
     };
-    let formatted = format_source(&source, language_version).map_err(|error| {
-        let diagnostics = diagnose_source_for_format(&source, language_version);
+    let formatted = format_source(&source, nostdb_version).map_err(|error| {
+        let diagnostics = diagnose_source_for_format(&source, nostdb_version);
         let detail = diagnostics
             .as_deref()
             .filter(|values| !values.is_empty())
@@ -1359,15 +1346,17 @@ fn run_inspect(options: CommonOptions) -> Result<(), CliError> {
             "ndb_format",
             "schema_revision",
             "generation",
+            "updated_at_unix_ms",
             "logical_checksum",
-            "source_managed",
+            "nost",
         ],
         &[vec![
             QueryValue::Integer(i64::from(info.ndb_format_version)),
             QueryValue::Integer(i64::from(info.schema_revision)),
-            QueryValue::Integer(info.generation as i64),
+            integer(info.generation)?,
+            integer(info.updated_at_unix_ms)?,
             QueryValue::String(format!("{:016x}", info.logical_checksum)),
-            QueryValue::Boolean(info.source_managed),
+            QueryValue::Boolean(info.nost),
         ]],
         options.format,
         &mut io::stdout(),
@@ -1502,14 +1491,11 @@ fn run_warnings(options: ProjectOptions) -> Result<(), CliError> {
     )
 }
 
-fn run_doctor(options: CommonOptions) -> Result<(), CliError> {
+fn run_doctor(mut options: CommonOptions) -> Result<(), CliError> {
+    resolve_project_database(&mut options)?;
     let project = options.project.as_deref().expect("required by parser");
     let config =
         ProjectConfig::load(project).map_err(|error| CliError::project(error.to_string()))?;
-    let mut compiler = ProjectCompiler::new();
-    let compiled = compiler
-        .compile(project)
-        .map_err(|error| CliError::project(compile_error_message(&error)))?;
     let database = EmbeddedDatabase::open(&options.database).map_err(CliError::database)?;
     let status = database.check().map_err(CliError::database)?;
     if !status.is_valid() {
@@ -1518,6 +1504,46 @@ fn run_doctor(options: CommonOptions) -> Result<(), CliError> {
             "database integrity check failed",
         ));
     }
+    if !config.has_nost() {
+        let synchronized = !config.has_materialized_sources()
+            && !database.info().map_err(CliError::database)?.nost;
+        let sync_status = if synchronized {
+            "ndb_only"
+        } else {
+            "source_visibility_pending_sync"
+        };
+        render_table_data(
+            &[
+                "project",
+                "database",
+                "synchronized",
+                "sync_status",
+                "warnings",
+            ],
+            &[vec![
+                QueryValue::String("ok".to_owned()),
+                QueryValue::String("ok".to_owned()),
+                QueryValue::Boolean(synchronized),
+                QueryValue::String(sync_status.to_owned()),
+                QueryValue::Integer(0),
+            ]],
+            options.format,
+            &mut io::stdout(),
+        )?;
+        return if synchronized {
+            Ok(())
+        } else {
+            Err(CliError::project(
+                "source visibility does not match `nost: false`; run `nostdb sync --project PATH`",
+            ))
+        };
+    }
+
+    let mut compiler = ProjectCompiler::new();
+    let compiled = compiler
+        .compile(project)
+        .map_err(|error| CliError::project(compile_error_message(&error)))?;
+    let info = database.info().map_err(CliError::database)?;
     let manifest = database.sync_manifest().map_err(CliError::database)?;
     let mut current_modules = compiled
         .source_hashes
@@ -1540,13 +1566,14 @@ fn run_doctor(options: CommonOptions) -> Result<(), CliError> {
     let (synchronized, sync_status) =
         manifest
             .as_ref()
-            .map_or((false, "not_source_managed"), |manifest| {
+            .map_or((false, "no_sync_baseline"), |manifest| {
                 let stored_modules = manifest
                     .modules
                     .iter()
                     .map(|module| (module.module_id, module.content_hash))
                     .collect::<Vec<_>>();
                 if manifest.semantic_hash == compiled.semantic_hash.as_bytes()
+                    && manifest.database_generation == info.generation
                     && stored_modules == current_modules
                 {
                     (true, "synchronized")
@@ -1574,9 +1601,9 @@ fn run_doctor(options: CommonOptions) -> Result<(), CliError> {
     )?;
     match sync_status {
         "synchronized" => Ok(()),
-        "not_source_managed" => Err(CliError::new(
+        "no_sync_baseline" => Err(CliError::new(
             EXIT_DATABASE,
-            "database has no Source Mode synchronization manifest and does not belong to this project; run `nostdb sync` with the intended database path",
+            "database has no `.nost` synchronization baseline for this project; run `nostdb sync --project PATH`",
         )),
         _ => Err(CliError::project(
             "source files or project identity differ from the database synchronization manifest; run `nostdb sync` before using this database",
@@ -1584,7 +1611,7 @@ fn run_doctor(options: CommonOptions) -> Result<(), CliError> {
     }
 }
 
-fn repl(options: QueryOptions, database: &mut Option<EmbeddedDatabase>) -> Result<(), CliError> {
+fn repl(options: &QueryOptions, database: &mut Option<EmbeddedDatabase>) -> Result<(), CliError> {
     let stdin = io::stdin();
     let mut input = stdin.lock();
     let mut stdout = io::stdout();
@@ -1618,7 +1645,7 @@ fn repl(options: QueryOptions, database: &mut Option<EmbeddedDatabase>) -> Resul
         if buffer.is_empty() && trimmed.starts_with(':') {
             match handle_admin(
                 trimmed,
-                &options,
+                options,
                 database,
                 &mut transaction,
                 &mut stdout,
@@ -1651,7 +1678,7 @@ fn repl(options: QueryOptions, database: &mut Option<EmbeddedDatabase>) -> Resul
                     }
                 }
             } else {
-                match execute_one(&options, database, &statement) {
+                match execute_one(options, database, &statement) {
                     Ok(result) => render_statement(&result, options.common.format, &mut stdout)?,
                     Err(error) => {
                         writeln!(stderr, "error: {}", error.message).map_err(output_error)?
@@ -1685,10 +1712,10 @@ fn handle_admin(
                 .info()
                 .map_err(CliError::database)?;
             render_table_data(
-                &["generation", "source_managed"],
+                &["generation", "nost"],
                 &[vec![
                     QueryValue::Integer(info.generation as i64),
-                    QueryValue::Boolean(info.source_managed),
+                    QueryValue::Boolean(info.nost),
                 ]],
                 options.common.format,
                 stdout,
@@ -1703,7 +1730,7 @@ fn handle_admin(
             let mut open = database.take().expect("REPL keeps the database open");
             open.checkpoint().map_err(CliError::database)?;
             drop(open);
-            let synchronization = synchronize(project, &options.common.database);
+            let synchronization = synchronize(project);
             *database = Some(
                 EmbeddedDatabase::open(&options.common.database).map_err(CliError::database)?,
             );

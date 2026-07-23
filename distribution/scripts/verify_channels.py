@@ -201,7 +201,7 @@ def fixture_diagnostic(project: Path, *, env=None):
             "query",
             "MATCH (",
             "--database",
-            project / "graph.nostdb",
+            project / ".nostdb",
             "--format",
             "json",
         ],
