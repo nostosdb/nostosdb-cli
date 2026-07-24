@@ -1205,7 +1205,7 @@ fn source_sync_write_and_administration_use_the_engine_facade() {
         "{\"columns\":[\"age\"],\"rows\":[[31]]}\n"
     );
     assert!(
-        fs::read_to_string(directory.join(".nostdb/graph.nost"))
+        fs::read_to_string(directory.join(".nostdb/root.nost"))
             .expect("source reads")
             .contains("`age`: 31")
     );
