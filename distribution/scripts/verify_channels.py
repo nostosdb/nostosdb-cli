@@ -196,7 +196,7 @@ def fixture_diagnostic(project: Path, *, env=None):
             sys.executable,
             project / ".agents" / "skills" / "nostdb" / "scripts" / "nostdb_core.py",
             "run",
-            "--project",
+            "--src",
             project,
             "--",
             "query",

@@ -1,7 +1,7 @@
 # CLI distribution contract
 
-Status: npm `0.0.2` is published under `latest` and `next`; no supported binary,
-Homebrew formula, or direct archive is published.
+Status: npm `0.0.3` is published under `next` while `latest` remains `0.0.2`;
+no supported binary, Homebrew formula, or direct archive is published.
 
 NostDB distributes one executable named `nostdb`. The Rust binary includes `nostdb-engine` and its Core dependencies at build time. Core is not a second user-installed package, daemon, or executable.
 

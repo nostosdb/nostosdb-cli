@@ -9,13 +9,12 @@ exists. See [PREVIEW.md](PREVIEW.md), [SECURITY.md](SECURITY.md), and
 
 The [distribution contract](DISTRIBUTION.md) provides the same Core-containing
 `nostdb` executable through npm, pinned `npx` zero-install execution, Homebrew,
-and direct archives. The unsupported npm `0.0.2` launcher and six native
-packages remain published under `latest` and `next`; this checkout is the
-unreleased `0.0.3` line. Homebrew and direct archives remain unpublished
-candidates.
+and direct archives. The unsupported npm `0.0.3` launcher and six native
+packages are published under `next`; `latest` remains `0.0.2`. Homebrew and
+direct archives remain unpublished candidates.
 
 ```bash
-npm install --global @nostdb/cli@0.0.2
+npm install --global @nostdb/cli@0.0.3
 nostdb --version
 ```
 

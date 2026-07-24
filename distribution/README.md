@@ -1,11 +1,11 @@
 # Release-candidate tooling
 
 This directory builds and verifies candidate artifacts for the targets in
-`release-manifest.json`. It now describes the unreleased `0.0.3` source
-candidate. The prior npm `0.0.2` packages remain published; no `0.0.3`
-artifact has been published. Direct archives remain unpublished. Every archive
-requires target-native smoke evidence and includes the CLI, repository notices,
-a deterministic SPDX inventory, and third-party attribution metadata.
+`release-manifest.json`. The seven npm `0.0.3` packages are published under
+`next` while `latest` remains `0.0.2`. Direct archives remain unpublished.
+Every archive requires target-native smoke evidence and includes the CLI,
+repository notices, a deterministic SPDX inventory, and third-party
+attribution metadata.
 
 The scripts do not publish, tag, sign with production credentials, create a Homebrew tap, or contact a package registry except when an operator explicitly runs npm tooling. This repository contains no GitHub Actions; candidate execution and any separately authorized provenance attestation are operator-owned.
 
