@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -13,7 +14,7 @@ SCRIPTS = ROOT / "distribution" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from common import archive_name, host_target, read_json, release_manifest, sha256
-from verify_channels import channel_diagnostic_environments
+from verify_channels import channel_diagnostic_environments, write_npx_shim
 
 
 def invoke(*arguments, cwd=None):
@@ -86,6 +87,69 @@ class DistributionTests(unittest.TestCase):
             environments["homebrew"]["NOSTDB_BIN"],
             "/candidate/homebrew/nostdb",
         )
+
+    @unittest.skipIf(os.name == "nt", "POSIX npx shim behavior")
+    def test_npx_channel_accepts_only_the_latest_selector(self):
+        shim_directory = self.temporary / "npx-shim"
+        shim_directory.mkdir()
+        real_npx = self.temporary / "real-npx"
+        real_npx.write_text(
+            "#!{}\n"
+            "import json, os, sys\n"
+            "open(os.environ['NPX_LOG'], 'w').write(json.dumps(sys.argv[1:]))\n"
+            .format(sys.executable),
+            encoding="utf-8",
+        )
+        real_npx.chmod(0o755)
+        prefix = self.temporary / "npm-prefix"
+        write_npx_shim(shim_directory, str(real_npx), prefix)
+        environment = os.environ.copy()
+        log = self.temporary / "npx.json"
+        environment.update(
+            {
+                "NPX_LOG": str(log),
+                "NPX_PREFIX": str(prefix),
+                "REAL_NPX": str(real_npx),
+            }
+        )
+        accepted = subprocess.run(
+            [
+                str(shim_directory / "npx"),
+                "--yes",
+                "--package=@nostdb/cli@latest",
+                "nostdb",
+                "--version",
+            ],
+            check=False,
+            env=environment,
+        )
+        self.assertEqual(accepted.returncode, 0)
+        self.assertEqual(
+            json.loads(log.read_text(encoding="utf-8")),
+            [
+                "--yes",
+                "--offline",
+                "--prefix",
+                str(prefix),
+                "nostdb",
+                "--version",
+            ],
+        )
+        refused = subprocess.run(
+            [
+                str(shim_directory / "npx"),
+                "--yes",
+                "--package=@nostdb/cli@0.0.3",
+                "nostdb",
+                "--version",
+            ],
+            check=False,
+            env=environment,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(refused.returncode, 97)
+        self.assertIn("unexpected latest npx command", refused.stderr)
 
     def metadata(self):
         metadata = self.temporary / "metadata"

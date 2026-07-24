@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove direct, npm-global, and pinned-npx candidates against one Core fixture."""
+"""Prove direct, npm-global, and latest-npx candidates against one Core fixture."""
 
 import argparse
 import json
@@ -118,13 +118,12 @@ def npm_bin(prefix: Path, global_install: bool) -> Path:
 
 
 def write_npx_shim(directory: Path, real_npx: str, prefix: Path) -> None:
-    version = release_manifest()["version"]
     python_script = directory / "npx_shim.py"
     python_script.write_text(
         "import os, subprocess, sys\n"
-        f"expected = ['--yes', '--package=@nostdb/cli@{version}', 'nostdb']\n"
+        "expected = ['--yes', '--package=@nostdb/cli@latest', 'nostdb']\n"
         "if sys.argv[1:4] != expected:\n"
-        "    print('unexpected pinned npx command: ' + repr(sys.argv[1:]), file=sys.stderr)\n"
+        "    print('unexpected latest npx command: ' + repr(sys.argv[1:]), file=sys.stderr)\n"
         "    sys.exit(97)\n"
         "command = [os.environ['REAL_NPX'], '--yes', '--offline', '--prefix', "
         "os.environ['NPX_PREFIX'], 'nostdb'] + sys.argv[4:]\n"
@@ -139,9 +138,9 @@ def write_npx_shim(directory: Path, real_npx: str, prefix: Path) -> None:
         cli.parent.mkdir(parents=True)
         cli.write_text(
             "const { spawnSync } = require('node:child_process');\n"
-            f"const expected = ['--yes', '--package=@nostdb/cli@{version}', 'nostdb'];\n"
+            "const expected = ['--yes', '--package=@nostdb/cli@latest', 'nostdb'];\n"
             "if (JSON.stringify(process.argv.slice(2, 5)) !== JSON.stringify(expected)) {\n"
-            "  console.error('unexpected pinned npx command'); process.exit(97);\n"
+            "  console.error('unexpected latest npx command'); process.exit(97);\n"
             "}\n"
             "const args = ['--yes', '--offline', '--prefix', process.env.NPX_PREFIX, "
             "'nostdb', ...process.argv.slice(5)];\n"
