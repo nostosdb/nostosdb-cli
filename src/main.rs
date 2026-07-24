@@ -2,6 +2,7 @@
 
 use std::env;
 use std::fs;
+use std::fs::OpenOptions;
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
@@ -33,6 +34,8 @@ static FORMAT_DIAGNOSTIC_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 const HELP: &str = "NostDB command-line client
 
 Usage:
+    nostdb init --project PATH [--allow-nonempty]
+                [--format table|json|jsonl|csv]
     nostdb query [QUERY] [--file PATH] [--database PATH|NAME] [--project PATH]
                  [--server nostdb://HOST:PORT] [--credential-file PATH]
                  [--format table|json|jsonl|csv] [--read-only] [--interactive]
@@ -163,6 +166,13 @@ struct ProjectOptions {
     format: OutputFormat,
 }
 
+#[derive(Debug)]
+struct InitOptions {
+    project: PathBuf,
+    allow_nonempty: bool,
+    format: OutputFormat,
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::from(EXIT_SUCCESS),
@@ -192,6 +202,7 @@ fn run() -> Result<(), CliError> {
         return Ok(());
     }
     match command.as_str() {
+        "init" => run_init(parse_init(arguments)?),
         "query" => run_query(parse_query(arguments)?),
         "server" => run_server(parse_server(arguments)?),
         "database" => run_database(parse_database(arguments)?),
@@ -213,6 +224,9 @@ fn run() -> Result<(), CliError> {
 
 fn command_help(command: &str) -> Result<String, CliError> {
     let usage = match command {
+        "init" => format!(
+            "Usage: nostdb init --project PATH [--allow-nonempty] [--format {MACHINE_FORMATS}]\n\nCreates a guarded NDB-only project with nostdb.json and a new root .nostdb. It refuses existing configuration or database files and nonempty destinations unless --allow-nonempty is explicit."
+        ),
         "query" => format!(
             "Usage: nostdb query [QUERY] [--file PATH] [--database PATH|NAME] [--project PATH]\n       [--server nostdb://HOST:PORT] [--credential-file PATH]\n       [--format {MACHINE_FORMATS}] [--read-only] [--interactive]\n\nProject queries use the project-local .nostdb root declared by nostdb.json. --read-only rejects every mutating statement before execution. Use jsonl for streaming output; multi-statement json is one array and multi-statement csv is rejected."
         ),
@@ -246,6 +260,27 @@ fn command_help(command: &str) -> Result<String, CliError> {
         }
     };
     Ok(usage)
+}
+
+fn parse_init(arguments: Vec<String>) -> Result<InitOptions, CliError> {
+    let mut project = None;
+    let mut allow_nonempty = false;
+    let mut format = OutputFormat::Table;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "-p" | "--project" => project = Some(value(&arguments, &mut index)?.into()),
+            "--allow-nonempty" => allow_nonempty = true,
+            "--format" => format = OutputFormat::parse(value(&arguments, &mut index)?)?,
+            option => return Err(CliError::usage(format!("unknown option `{option}`"))),
+        }
+        index += 1;
+    }
+    Ok(InitOptions {
+        project: project.ok_or_else(|| CliError::usage("--project is required"))?,
+        allow_nonempty,
+        format,
+    })
 }
 
 fn parse_format(arguments: Vec<String>) -> Result<FormatOptions, CliError> {
@@ -633,6 +668,155 @@ fn value<'a>(arguments: &'a [String], index: &mut usize) -> Result<&'a str, CliE
         .get(*index)
         .map(String::as_str)
         .ok_or_else(|| CliError::usage("option requires a value"))
+}
+
+fn run_init(options: InitOptions) -> Result<(), CliError> {
+    let project = lexical_absolute(&options.project)?;
+    if project.parent().is_none() {
+        return Err(CliError::project(format!(
+            "refusing broad project root initialization: {}",
+            project.display()
+        )));
+    }
+    for variable in ["HOME", "USERPROFILE"] {
+        if let Some(home) = env::var_os(variable) {
+            let home = lexical_absolute(Path::new(&home))?;
+            if project == home {
+                return Err(CliError::project(format!(
+                    "refusing broad project root initialization: {}",
+                    project.display()
+                )));
+            }
+        }
+    }
+
+    match fs::symlink_metadata(&project) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(CliError::project(format!(
+                "project root must not be a symlink: {}",
+                project.display()
+            )));
+        }
+        Ok(metadata) if !metadata.is_dir() => {
+            return Err(CliError::project(format!(
+                "project root is not a directory: {}",
+                project.display()
+            )));
+        }
+        Ok(_) => {
+            let nonempty = fs::read_dir(&project)
+                .map_err(|error| {
+                    CliError::new(
+                        EXIT_IO,
+                        format!("cannot inspect {}: {error}", project.display()),
+                    )
+                })?
+                .next()
+                .transpose()
+                .map_err(|error| {
+                    CliError::new(
+                        EXIT_IO,
+                        format!("cannot inspect {}: {error}", project.display()),
+                    )
+                })?
+                .is_some();
+            if nonempty && !options.allow_nonempty {
+                return Err(CliError::project(format!(
+                    "refusing to initialize a nonempty directory without --allow-nonempty: {}",
+                    project.display()
+                )));
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::create_dir_all(&project).map_err(|error| {
+                CliError::new(
+                    EXIT_IO,
+                    format!("cannot create {}: {error}", project.display()),
+                )
+            })?;
+        }
+        Err(error) => {
+            return Err(CliError::new(
+                EXIT_IO,
+                format!("cannot inspect {}: {error}", project.display()),
+            ));
+        }
+    }
+
+    let config = project.join("nostdb.json");
+    let database = project.join(".nostdb");
+    if config.exists() {
+        return Err(CliError::project(format!(
+            "refusing to replace existing {}",
+            config.display()
+        )));
+    }
+    if database.exists() {
+        return Err(CliError::project(format!(
+            "refusing to adopt existing {}",
+            database.display()
+        )));
+    }
+
+    let mut config_bytes = serde_json::to_vec_pretty(&serde_json::json!({
+        "nost": false,
+        "nostdb": NOSTDB_VERSION,
+        "root": ".nostdb",
+    }))
+    .map_err(|error| CliError::project(format!("cannot encode nostdb.json: {error}")))?;
+    config_bytes.push(b'\n');
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&config)
+        .map_err(|error| {
+            let code = if error.kind() == io::ErrorKind::AlreadyExists {
+                EXIT_PROJECT
+            } else {
+                EXIT_IO
+            };
+            CliError::new(code, format!("cannot create {}: {error}", config.display()))
+        })?;
+    if let Err(error) = file.write_all(&config_bytes).and_then(|()| file.sync_all()) {
+        drop(file);
+        let _ = fs::remove_file(&config);
+        return Err(CliError::new(
+            EXIT_IO,
+            format!("cannot write {}: {error}", config.display()),
+        ));
+    }
+    drop(file);
+
+    let created = EmbeddedDatabase::create(&database).map_err(|error| {
+        cleanup_init_files(&config, &database);
+        CliError::database(error)
+    })?;
+    drop(created);
+    let report = synchronize(&project).inspect_err(|_| {
+        cleanup_init_files(&config, &database);
+    })?;
+    emit_project_diagnostics(&report.diagnostics);
+
+    render_table_data(
+        &["config", "database", "nostdb", "nost"],
+        &[vec![
+            QueryValue::String(config.display().to_string()),
+            QueryValue::String(database.display().to_string()),
+            QueryValue::Integer(i64::from(NOSTDB_VERSION)),
+            QueryValue::Boolean(false),
+        ]],
+        options.format,
+        &mut io::stdout(),
+    )
+}
+
+fn cleanup_init_files(config: &Path, database: &Path) {
+    let _ = fs::remove_file(config);
+    for suffix in ["", ".lock", "-wal", "-shm", "-journal"] {
+        let mut path = database.as_os_str().to_os_string();
+        path.push(suffix);
+        let _ = fs::remove_file(PathBuf::from(path));
+    }
 }
 
 fn run_query(mut options: QueryOptions) -> Result<(), CliError> {

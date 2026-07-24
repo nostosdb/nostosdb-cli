@@ -21,6 +21,160 @@ fn command() -> Command {
 }
 
 #[test]
+fn native_init_creates_one_guarded_ndb_only_project() {
+    let directory = temp_dir("native-init");
+    let output = command()
+        .args([
+            "init",
+            "--project",
+            directory.to_str().expect("UTF-8 path"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("native init runs");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("init output is JSON");
+    assert_eq!(
+        payload["columns"],
+        serde_json::json!(["config", "database", "nostdb", "nost"])
+    );
+    assert_eq!(payload["rows"][0][2], 1);
+    assert_eq!(payload["rows"][0][3], false);
+    let config: serde_json::Value = serde_json::from_slice(
+        &fs::read(directory.join("nostdb.json")).expect("configuration reads"),
+    )
+    .expect("configuration is JSON");
+    assert_eq!(
+        config,
+        serde_json::json!({
+            "nost": false,
+            "nostdb": 1,
+            "root": ".nostdb",
+        })
+    );
+    assert!(directory.join(".nostdb").is_file());
+    assert!(!directory.join(".nost").exists());
+
+    let repeated = command()
+        .args(["init", "--project", directory.to_str().expect("UTF-8 path")])
+        .output()
+        .expect("repeated init runs");
+    assert_eq!(repeated.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&repeated.stderr).contains("nonempty directory"));
+
+    let help = command()
+        .args(["init", "--help"])
+        .output()
+        .expect("init help runs");
+    assert!(help.status.success());
+    assert!(String::from_utf8_lossy(&help.stdout).contains("--allow-nonempty"));
+
+    fs::remove_dir_all(directory).expect("temporary directory removes");
+}
+
+#[test]
+fn native_init_preserves_confirmed_nonempty_project_files() {
+    let directory = temp_dir("native-init-nonempty");
+    let retained = directory.join("retained.txt");
+    fs::write(&retained, "keep\n").expect("unrelated file writes");
+
+    let rejected = command()
+        .args(["init", "--project", directory.to_str().expect("UTF-8 path")])
+        .output()
+        .expect("guarded init runs");
+    assert_eq!(rejected.status.code(), Some(3));
+    assert!(!directory.join("nostdb.json").exists());
+    assert!(!directory.join(".nostdb").exists());
+
+    let accepted = command()
+        .args([
+            "init",
+            "--project",
+            directory.to_str().expect("UTF-8 path"),
+            "--allow-nonempty",
+        ])
+        .output()
+        .expect("confirmed init runs");
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(retained).expect("unrelated file reads"),
+        "keep\n"
+    );
+    assert!(directory.join("nostdb.json").is_file());
+    assert!(directory.join(".nostdb").is_file());
+
+    fs::remove_dir_all(directory).expect("temporary directory removes");
+}
+
+#[test]
+fn native_init_rejects_broad_and_non_directory_roots() {
+    let directory = temp_dir("native-init-guards");
+    let home = command()
+        .env("HOME", &directory)
+        .args(["init", "--project", directory.to_str().expect("UTF-8 path")])
+        .output()
+        .expect("home guard runs");
+    assert_eq!(home.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&home.stderr).contains("broad project root"));
+
+    let filesystem_root = directory
+        .ancestors()
+        .last()
+        .expect("temporary directory has a filesystem root");
+    let root = command()
+        .args([
+            "init",
+            "--project",
+            filesystem_root.to_str().expect("UTF-8 root"),
+        ])
+        .output()
+        .expect("filesystem root guard runs");
+    assert_eq!(root.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&root.stderr).contains("broad project root"));
+
+    let file = directory.join("file-root");
+    fs::write(&file, "not a directory\n").expect("file root writes");
+    let rejected = command()
+        .args(["init", "--project", file.to_str().expect("UTF-8 path")])
+        .output()
+        .expect("file root guard runs");
+    assert_eq!(rejected.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("not a directory"));
+
+    fs::remove_dir_all(directory).expect("temporary directory removes");
+}
+
+#[cfg(unix)]
+#[test]
+fn native_init_rejects_a_symlink_project_root() {
+    use std::os::unix::fs::symlink;
+
+    let directory = temp_dir("native-init-symlink");
+    let actual = directory.join("actual");
+    fs::create_dir(&actual).expect("actual directory creates");
+    let linked = directory.join("linked");
+    symlink(&actual, &linked).expect("project symlink creates");
+    let rejected = command()
+        .args(["init", "--project", linked.to_str().expect("UTF-8 symlink")])
+        .output()
+        .expect("symlink guard runs");
+    assert_eq!(rejected.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("must not be a symlink"));
+
+    fs::remove_dir_all(directory).expect("temporary directory removes");
+}
+
+#[test]
 fn one_shot_pipe_and_file_share_machine_readable_semantics() {
     let directory = temp_dir("inputs");
     let database = directory.join(".nostdb");

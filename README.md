@@ -47,10 +47,9 @@ cargo build --manifest-path nostdb-cli/Cargo.toml --locked
 NOSTDB_BIN="$PWD/nostdb-cli/target/debug/nostdb"
 PREVIEW_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nostdb-source-preview.XXXXXX")"
 
-python3 skills/scripts/nostdb_skill.py init \
-  --src "$PREVIEW_DIR" \
-  --core-provider installed \
-  --core-binary "$NOSTDB_BIN"
+"$NOSTDB_BIN" init \
+  --project "$PREVIEW_DIR" \
+  --format json
 "$NOSTDB_BIN" query \
   "CREATE (n {name: 'Alice'}) RETURN n.name AS name" \
   --project "$PREVIEW_DIR" \
