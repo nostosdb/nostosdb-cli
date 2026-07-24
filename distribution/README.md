@@ -1,8 +1,10 @@
 # Release-candidate tooling
 
 This directory builds and verifies candidate artifacts for the targets in
-`release-manifest.json`. The seven npm `0.0.3` packages are published under
-`next` while `latest` remains `0.0.2`. Direct archives remain unpublished.
+`release-manifest.json`. The seven npm packages are published at `0.0.4` under
+both `latest` and `next`. Direct archives remain unpublished. Source manifests
+retain their baseline version; the tag-driven release preparation step stamps
+the release version into staged artifacts.
 Every archive requires target-native smoke evidence and includes the CLI,
 repository notices, a deterministic SPDX inventory, and third-party
 attribution metadata.
