@@ -8,6 +8,5 @@ original project material. External contributions are not accepted, and
 distribution releases remain closed pending legal review.
 
 The CLI links the sibling nostdb-engine and therefore includes the Core's
-permissively licensed Rust dependencies and bundled public-domain SQLite.
-Exact per-package license texts/SBOM and final attribution packaging remain
-legal release blockers.
+permissively licensed Rust dependencies. Exact per-package license texts/SBOM
+and final attribution packaging remain legal release blockers.

@@ -3,7 +3,7 @@
 The CLI is source-available SSPL-1.0 evaluation software with no supported binary release.
 
 - Commands, exit codes, and machine formats are implemented but remain pre-release surfaces.
-- Format 0 databases have no stable byte compatibility.
+- Native Format 1 databases have no stable byte compatibility.
 - Local projects are NDB-first. `source.enabled: true` opts into canonical human-readable `.nost`
   materialization, content-hash conflict detection, and newest-update-wins
   synchronization.
