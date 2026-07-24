@@ -1,6 +1,6 @@
 {
   "name": "@nostdb/cli-darwin-x64",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "NostDB CLI for macOS Intel",
   "license": "SSPL-1.0",
   "os": ["darwin"],

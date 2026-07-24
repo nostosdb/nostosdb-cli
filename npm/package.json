@@ -1,6 +1,6 @@
 {
   "name": "@nostdb/cli",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Cross-platform launcher for the NostDB CLI",
   "license": "SSPL-1.0",
   "bin": {
@@ -27,12 +27,12 @@
     "url": "https://github.com/nostdb/nostdb-cli/issues"
   },
   "optionalDependencies": {
-    "@nostdb/cli-darwin-arm64": "0.0.2",
-    "@nostdb/cli-darwin-x64": "0.0.2",
-    "@nostdb/cli-linux-arm64-gnu": "0.0.2",
-    "@nostdb/cli-linux-x64-gnu": "0.0.2",
-    "@nostdb/cli-win32-arm64": "0.0.2",
-    "@nostdb/cli-win32-x64": "0.0.2"
+    "@nostdb/cli-darwin-arm64": "0.0.3",
+    "@nostdb/cli-darwin-x64": "0.0.3",
+    "@nostdb/cli-linux-arm64-gnu": "0.0.3",
+    "@nostdb/cli-linux-x64-gnu": "0.0.3",
+    "@nostdb/cli-win32-arm64": "0.0.3",
+    "@nostdb/cli-win32-x64": "0.0.3"
   },
   "publishConfig": {
     "access": "public"
